@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using MCPal.Server.Tenancy;
 using MCPal.Server.Tests.Infrastructure;
 
 namespace MCPal.Server.Tests.Audit;
@@ -202,7 +203,7 @@ internal sealed class AuditEndpointTests
         response.Content.Headers.ContentType?.MediaType.Should().Be("text/csv");
         response.Content.Headers.ContentDisposition?.DispositionType.Should().Be("attachment");
         var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        lines[0].Should().StartWith("occurredAt,durationMs,authKind,apiKeyId,apiKeyName,oauthClientId,bridgeName,serverName,toolName,publicName,outcome,errorMessage");
+        lines[0].Should().StartWith("occurredAt,durationMs,authKind,userId,userEmail,apiKeyId,apiKeyName,oauthClientId,bridgeName,serverName,toolName,publicName,outcome,errorMessage");
         lines.Should().HaveCount(3);
         csv.Should().Contain("\"get,page\"");
         csv.Should().Contain("'=HYPERLINK");
@@ -210,6 +211,88 @@ internal sealed class AuditEndpointTests
 
         using var filtered = await acme.GetAsync("/api/portal/audit/export.csv?outcome=tool_error", Ct);
         (await filtered.Content.ReadAsStringAsync(Ct)).Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Should().HaveCount(2);
+    }
+
+    [Test]
+    public async Task Get_RowsWithUser_ShowTheUserIdAndCurrentEmail()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var anna = await factory.SeedUserAsync(acme.CompanyId, "anna@acme.example", PortalRole.Member, Ct);
+        using var owner = await SignInAsync(factory, acme.OwnerEmail);
+        await AuditTestData.InsertAsync(factory.Services, Ct,
+            AuditTestData.Entry(acme.CompanyId, Base, tool: "by-anna", userId: anna.UserId),
+            AuditTestData.Entry(acme.CompanyId, Base.AddMinutes(1), tool: "by-ghost", userId: "removed-user-id"),
+            AuditTestData.Entry(acme.CompanyId, Base.AddMinutes(2), tool: "old-row"));
+
+        var items = (await GetJsonAsync(owner, "/api/portal/audit")).GetProperty("items").EnumerateArray().ToList();
+
+        var old = items.Single(i => i.GetProperty("toolName").GetString() == "old-row");
+        old.GetProperty("userId").ValueKind.Should().Be(JsonValueKind.Null);
+        var ghost = items.Single(i => i.GetProperty("toolName").GetString() == "by-ghost");
+        ghost.GetProperty("userId").GetString().Should().Be("removed-user-id");
+        ghost.GetProperty("userEmail").ValueKind.Should().Be(JsonValueKind.Null);
+        var byAnna = items.Single(i => i.GetProperty("toolName").GetString() == "by-anna");
+        byAnna.GetProperty("userId").GetString().Should().Be(anna.UserId);
+        byAnna.GetProperty("userEmail").GetString().Should().Be("anna@acme.example");
+    }
+
+    [Test]
+    public async Task List_FilterByUser_ReturnsOnlyThatUsersCallsAndExportFollows()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var anna = await factory.SeedUserAsync(acme.CompanyId, "anna@acme.example", PortalRole.Member, Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var owner = await SignInAsync(factory, acme.OwnerEmail);
+        await AuditTestData.InsertAsync(factory.Services, Ct,
+            AuditTestData.Entry(acme.CompanyId, Base, tool: "anna-1", userId: anna.UserId),
+            AuditTestData.Entry(acme.CompanyId, Base.AddMinutes(1), tool: "ben-1", userId: ben.UserId),
+            AuditTestData.Entry(acme.CompanyId, Base.AddMinutes(2), tool: "anna-2", userId: anna.UserId));
+
+        Tools(await GetJsonAsync(owner, $"/api/portal/audit?userId={anna.UserId}")).Should().Equal("anna-2", "anna-1");
+        Tools(await GetJsonAsync(owner, "/api/portal/audit?userId=someone-else")).Should().BeEmpty();
+        using var csv = await owner.GetAsync($"/api/portal/audit/export.csv?userId={ben.UserId}", Ct);
+        var lines = (await csv.Content.ReadAsStringAsync(Ct)).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        lines.Should().HaveCount(2);
+        lines[1].Should().Contain("ben@acme.example").And.Contain(ben.UserId);
+    }
+
+    [Test]
+    public async Task List_FilterByUserOfOtherCompany_ReturnsNothing()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var globex = await factory.SeedCompanyAsync("Globex", Ct);
+        using var acmeOwner = await SignInAsync(factory, acme.OwnerEmail);
+        await AuditTestData.InsertAsync(factory.Services, Ct, AuditTestData.Entry(globex.CompanyId, Base, tool: "globex-secret", userId: globex.OwnerUserId));
+
+        Tools(await GetJsonAsync(acmeOwner, $"/api/portal/audit?userId={globex.OwnerUserId}")).Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task List_Member_Returns403ForListAndExport()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var anna = await factory.SeedUserAsync(acme.CompanyId, "anna@acme.example", PortalRole.Member, Ct);
+        using var member = await SignInAsync(factory, anna.Email);
+        await AuditTestData.InsertAsync(factory.Services, Ct, AuditTestData.Entry(acme.CompanyId, Base, tool: "secret", userId: anna.UserId));
+
+        using var list = await member.GetAsync("/api/portal/audit", Ct);
+        using var export = await member.GetAsync("/api/portal/audit/export.csv", Ct);
+
+        list.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        export.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await list.Content.ReadAsStringAsync(Ct)).Should().NotContain("secret");
+    }
+
+    private static async Task<PortalClient> SignInAsync(ServerWebApplicationFactory factory, string email)
+    {
+        var portal = new PortalClient(factory);
+        using var response = await portal.PostAsync("/api/portal/auth/login", new { email, password = PortalClient.Password }, Ct);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        return portal;
     }
 
     private static async Task<Guid> CreateKeyAsync(PortalClient portal, string name)

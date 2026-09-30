@@ -14,8 +14,11 @@ internal sealed class ToolCallAudit
 
     public int DurationMs { get; set; }
 
-    /// <summary><c>apikey</c> or <c>oauth</c>.</summary>
+    /// <summary><c>pat</c> (personal access token), <c>oauth</c> or <c>apikey</c> (unused; bridge keys cannot call tools).</summary>
     public string AuthKind { get; set; } = string.Empty;
+
+    /// <summary>The portal user who made the call. Not a foreign key: the row stays when the user is removed.</summary>
+    public string? UserId { get; set; }
 
     public Guid? ApiKeyId { get; set; }
 
@@ -42,6 +45,7 @@ internal sealed class ToolCallAudit
 internal static class AuditColumns
 {
     public const int AuthKind = 16;
+    public const int UserId = 64;
     public const int OAuthClientId = 64;
     public const int Name = 200;
     public const int PublicName = 64;

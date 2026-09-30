@@ -32,6 +32,8 @@ function entry(overrides: Partial<AuditEntry>): AuditEntry {
     occurredAt: '2026-09-30T08:00:00Z',
     durationMs: 120,
     authKind: 'pat',
+    userId: 'u1',
+    userEmail: 'anna@acme.example',
     apiKeyId: 'k1',
     apiKeyName: 'HQ bridge',
     oauthClientId: null,
@@ -42,6 +44,23 @@ function entry(overrides: Partial<AuditEntry>): AuditEntry {
     outcome: 'ok',
     errorMessage: null,
     ...overrides,
+  };
+}
+
+const team = {
+  users: [
+    { id: 'u1', email: 'anna@acme.example', role: 'member', emailConfirmed: true, disabled: false, groups: [] },
+    { id: 'u2', email: 'ben@acme.example', role: 'member', emailConfirmed: true, disabled: false, groups: [] },
+  ],
+  invitations: [],
+};
+
+/** The page reads the audit log, keys and users (for the filters). */
+function scripted(page: AuditPageData) {
+  return (call: RecordedCall) => {
+    if (call.url === '/api/portal/keys') return { body: [key] };
+    if (call.url === '/api/portal/users') return { body: team };
+    return { body: page };
   };
 }
 
@@ -62,7 +81,7 @@ describe('AuditPage', () => {
       ],
       nextCursor: null,
     };
-    mockFetch((call) => (call.url === '/api/portal/keys' ? { body: [key] } : { body: page }));
+    mockFetch(scripted(page));
 
     renderPage();
 
@@ -81,25 +100,45 @@ describe('AuditPage', () => {
     expect(within(ok).getByText('OK')).toBeInTheDocument();
   });
 
+  it('shows which user made each call, and marks removed users', async () => {
+    mockFetch(
+      scripted({
+        items: [entry({ id: 'e2', publicName: 'kb__ghost', userId: 'gone', userEmail: null }), entry({}), entry({ id: 'e3', publicName: 'kb__legacy', userId: null, userEmail: null })],
+        nextCursor: null,
+      }),
+    );
+
+    renderPage();
+
+    const ghost = (await screen.findByText('kb__ghost')).closest('tr');
+    const current = screen.getByText('kb__search').closest('tr');
+    if (ghost === null || current === null) throw new Error('rows missing');
+    expect(within(ghost).getByText('(removed user)')).toBeInTheDocument();
+    expect(within(current).getByText('anna@acme.example')).toBeInTheDocument();
+  });
+
   it('applies the filters to the request', async () => {
-    const calls = mockFetch((call) => (call.url === '/api/portal/keys' ? { body: [key] } : { body: { items: [], nextCursor: null } }));
+    const calls = mockFetch(scripted({ items: [], nextCursor: null }));
     renderPage();
     await screen.findByText('No calls match these filters.');
 
     await userEvent.type(screen.getByLabelText('Tool'), 'search');
     await userEvent.selectOptions(screen.getByLabelText('Outcome'), 'timeout');
     await userEvent.selectOptions(screen.getByLabelText('API key'), 'k1');
+    await userEvent.selectOptions(await screen.findByLabelText('User'), 'u2');
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     const last = auditCalls(calls).at(-1);
     expect(last?.url).toContain('tool=search');
     expect(last?.url).toContain('outcome=timeout');
     expect(last?.url).toContain('keyId=k1');
+    expect(last?.url).toContain('userId=u2');
   });
 
   it('loads the next page with the cursor', async () => {
     const calls = mockFetch((call) => {
       if (call.url === '/api/portal/keys') return { body: [key] };
+      if (call.url === '/api/portal/users') return { body: team };
       if (call.url.includes('cursor=c1')) return { body: { items: [entry({ id: 'e2', publicName: 'kb__older' })], nextCursor: null } };
       return { body: { items: [entry({})], nextCursor: 'c1' } };
     });
@@ -115,7 +154,7 @@ describe('AuditPage', () => {
   });
 
   it('links the CSV export with the current filters', async () => {
-    mockFetch((call) => (call.url === '/api/portal/keys' ? { body: [key] } : { body: { items: [entry({})], nextCursor: null } }));
+    mockFetch(scripted({ items: [entry({})], nextCursor: null }));
     renderPage();
     await screen.findByText('kb__search');
 

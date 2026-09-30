@@ -27,7 +27,7 @@ export function Layout() {
         <nav aria-label="Main">
           <NavLink to="/keys">{t('nav.keys')}</NavLink>
           <NavLink to="/connections">{t('nav.connections')}</NavLink>
-          <NavLink to="/audit">{t('nav.audit')}</NavLink>
+          {me.data?.role === 'owner' && <NavLink to="/audit">{t('nav.audit')}</NavLink>}
           {me.data?.role === 'owner' && <NavLink to="/users">{t('nav.users')}</NavLink>}
           {me.data?.role === 'owner' && <NavLink to="/groups">{t('nav.groups')}</NavLink>}
           <NavLink to="/access">{t('nav.access')}</NavLink>

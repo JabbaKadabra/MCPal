@@ -54,6 +54,7 @@ internal sealed class AuditWriter : BackgroundService, IAuditSink
         ArgumentNullException.ThrowIfNull(entry);
 
         entry.AuthKind = Truncate(entry.AuthKind, AuditColumns.AuthKind);
+        entry.UserId = entry.UserId is null ? null : Truncate(entry.UserId, AuditColumns.UserId);
         entry.OAuthClientId = entry.OAuthClientId is null ? null : Truncate(entry.OAuthClientId, AuditColumns.OAuthClientId);
         entry.BridgeName = Truncate(entry.BridgeName, AuditColumns.Name);
         entry.ServerName = Truncate(entry.ServerName, AuditColumns.Name);

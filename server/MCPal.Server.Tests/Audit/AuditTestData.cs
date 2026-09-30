@@ -14,7 +14,8 @@ internal static class AuditTestData
         string tool = "search",
         string outcome = "ok",
         Guid? apiKeyId = null,
-        string authKind = "apikey",
+        string authKind = "pat",
+        string? userId = null,
         string? oauthClientId = null,
         string server = "kb") => new()
     {
@@ -23,6 +24,7 @@ internal static class AuditTestData
         OccurredAt = occurredAt,
         DurationMs = 12,
         AuthKind = authKind,
+        UserId = userId,
         ApiKeyId = apiKeyId,
         OAuthClientId = oauthClientId,
         BridgeName = "hq-01",

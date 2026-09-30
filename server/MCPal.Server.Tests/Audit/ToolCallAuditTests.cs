@@ -41,6 +41,7 @@ internal sealed class ToolCallAuditTests
         var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
         row.Outcome.Should().Be("ok");
         row.AuthKind.Should().Be("pat");
+        row.UserId.Should().Be(acme.OwnerUserId);
         row.ApiKeyId.Should().Be(acme.PersonalKeyId);
         row.OAuthClientId.Should().BeNull();
         row.BridgeName.Should().Be("fake");
@@ -66,7 +67,37 @@ internal sealed class ToolCallAuditTests
         var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
         row.AuthKind.Should().Be("oauth");
         row.OAuthClientId.Should().Be("claude-client-1");
+        row.UserId.Should().Be(acme.OwnerUserId);
         row.ApiKeyId.Should().BeNull();
+    }
+
+    [Test]
+    public async Task Call_ViaOAuth_RecordsUserId()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var anna = await factory.SeedUserAsync(acme.CompanyId, "anna@acme.example", PortalRole.Member, Ct);
+        var token = await factory.IssueAccessTokenAsync(acme.CompanyId, anna.UserId, "claude-client-1", Ct);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, token);
+
+        await client.CallToolAsync("kb__search", cancellationToken: Ct);
+
+        (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single().UserId.Should().Be(anna.UserId);
+    }
+
+    [Test]
+    public async Task Call_OfUnknownTool_StillRecordsTheUser()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
+
+        await client.CallToolAsync("nope__nothing", cancellationToken: Ct);
+
+        var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
+        row.Outcome.Should().Be("offline");
+        row.UserId.Should().Be(acme.OwnerUserId);
     }
 
     [Test]

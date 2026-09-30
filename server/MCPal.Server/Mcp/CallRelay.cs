@@ -106,6 +106,7 @@ internal sealed class CallRelay(
             OccurredAt = startedAt,
             DurationMs = (int)Math.Min(int.MaxValue, elapsed.TotalMilliseconds),
             AuthKind = caller.AuthKind,
+            UserId = caller.UserId,
             ApiKeyId = caller.ApiKeyId,
             OAuthClientId = caller.OAuthClientId,
             BridgeName = tool?.BridgeName ?? string.Empty,

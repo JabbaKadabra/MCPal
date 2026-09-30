@@ -106,6 +106,10 @@ export interface AuditEntry {
   occurredAt: string;
   durationMs: number;
   authKind: 'apikey' | 'pat' | 'oauth';
+  /** Null for rows from before calls were tied to users. */
+  userId: string | null;
+  /** Null when the user was removed since. */
+  userEmail: string | null;
   apiKeyId: string | null;
   apiKeyName: string | null;
   oauthClientId: string | null;
@@ -127,6 +131,7 @@ export interface AuditFilters {
   tool: string;
   outcome: string;
   keyId: string;
+  userId: string;
   from: string;
   to: string;
 }

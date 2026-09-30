@@ -310,18 +310,21 @@ internal sealed class TeamTests
     }
 
     [Test]
-    public async Task Members_CanViewConnectionsConnectInfoAndAudit()
+    public async Task Members_CanViewConnectionsAndConnectInfoButNotTheAuditLog()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
         using var _ = owner;
         using var member = await JoinAsync(factory, owner, "member@acme.example");
 
-        foreach (var url in new[] { "/api/portal/connections", "/api/portal/connect-info", "/api/portal/audit" })
+        foreach (var url in new[] { "/api/portal/connections", "/api/portal/connect-info" })
         {
             using var response = await member.GetAsync(url, Ct);
             response.StatusCode.Should().Be(HttpStatusCode.OK, url);
         }
+
+        using var audit = await member.GetAsync("/api/portal/audit", Ct);
+        audit.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Test]

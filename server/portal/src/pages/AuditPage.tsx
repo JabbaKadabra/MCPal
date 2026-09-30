@@ -15,11 +15,15 @@ const outcomeTone: Record<AuditOutcome, TagTone> = {
   offline: 'warn',
   cancelled: 'off',
 };
-const noFilters: AuditFilters = { tool: '', outcome: '', keyId: '', from: '', to: '' };
+const noFilters: AuditFilters = { tool: '', outcome: '', keyId: '', userId: '', from: '', to: '' };
 
 /** A datetime-local value is local time without offset; the API wants an instant. */
 function toInstant(localValue: string): string {
   return localValue === '' ? '' : new Date(localValue).toISOString();
+}
+
+function user(entry: AuditEntry): string {
+  return entry.userEmail ?? (entry.userId === null ? '' : t('audit.user.removed'));
 }
 
 function caller(entry: AuditEntry): string {
@@ -33,6 +37,7 @@ export function AuditPage() {
   const [draft, setDraft] = useState<AuditFilters>(noFilters);
   const [applied, setApplied] = useState<AuditFilters>(noFilters);
   const keys = useQuery({ queryKey: ['keys'], queryFn: api.keys });
+  const team = useQuery({ queryKey: ['team'], queryFn: api.team });
   const audit = useInfiniteQuery({
     queryKey: ['audit', applied],
     queryFn: ({ pageParam }) => api.audit(applied, pageParam),
@@ -64,6 +69,17 @@ export function AuditPage() {
               {outcomes.map((outcome) => (
                 <option key={outcome} value={outcome}>
                   {t(`audit.outcome.${outcome}` satisfies MessageKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t('audit.filter.user')}
+            <select value={draft.userId} onChange={(e) => setDraft({ ...draft, userId: e.target.value })}>
+              <option value="">{t('audit.filter.any')}</option>
+              {team.data?.users.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.email}
                 </option>
               ))}
             </select>
@@ -101,6 +117,7 @@ export function AuditPage() {
               <tr>
                 <th>{t('audit.col.time')}</th>
                 <th>{t('audit.col.tool')}</th>
+                <th>{t('audit.col.user')}</th>
                 <th>{t('audit.col.caller')}</th>
                 <th>{t('audit.col.bridge')}</th>
                 <th>{t('audit.col.duration')}</th>
@@ -114,6 +131,7 @@ export function AuditPage() {
                   <td>
                     <code>{entry.publicName}</code>
                   </td>
+                  <td>{user(entry)}</td>
                   <td>{caller(entry)}</td>
                   <td>{entry.bridgeName}</td>
                   <td className="num">{`${entry.durationMs} ms`}</td>

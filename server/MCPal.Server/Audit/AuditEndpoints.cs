@@ -15,6 +15,8 @@ internal sealed record AuditEntryResponse(
     DateTimeOffset OccurredAt,
     int DurationMs,
     string AuthKind,
+    string? UserId,
+    string? UserEmail,
     Guid? ApiKeyId,
     string? ApiKeyName,
     [property: System.Text.Json.Serialization.JsonPropertyName("oauthClientId")] string? OAuthClientId,
@@ -27,7 +29,10 @@ internal sealed record AuditEntryResponse(
 
 internal sealed record AuditPageResponse(IReadOnlyList<AuditEntryResponse> Items, string? NextCursor);
 
-/// <summary>The audit log of the signed-in user's company. The company always comes from the user, never from the request.</summary>
+/// <summary>
+/// The audit log of the signed-in owner's company (it names people, so members do not see it). The company always comes from the
+/// user, never from the request.
+/// </summary>
 internal static class AuditEndpoints
 {
     public const int DefaultLimit = 50;
@@ -36,7 +41,7 @@ internal static class AuditEndpoints
 
     private static readonly string[] CsvColumns =
     [
-        "occurredAt", "durationMs", "authKind", "apiKeyId", "apiKeyName", "oauthClientId",
+        "occurredAt", "durationMs", "authKind", "userId", "userEmail", "apiKeyId", "apiKeyName", "oauthClientId",
         "bridgeName", "serverName", "toolName", "publicName", "outcome", "errorMessage",
     ];
 
@@ -44,8 +49,9 @@ internal static class AuditEndpoints
     {
         ArgumentNullException.ThrowIfNull(secured);
 
-        secured.MapGet("audit", ListAsync);
-        secured.MapGet("audit/export.csv", ExportAsync);
+        var owners = secured.MapGroup(string.Empty).AddEndpointFilter<OwnerOnlyFilter>();
+        owners.MapGet("audit", ListAsync);
+        owners.MapGet("audit/export.csv", ExportAsync);
     }
 
     private static async Task<IResult> ListAsync(HttpRequest request, ClaimsPrincipal principal, UserManager<PortalUser> users, MCPalDbContext db, CancellationToken cancellationToken)
@@ -65,9 +71,9 @@ internal static class AuditEndpoints
             .Take(filter.Limit + 1)
             .ToListAsync(cancellationToken);
         var page = rows.Take(filter.Limit).ToList();
-        var keyNames = await KeyNamesAsync(db, companyId, cancellationToken);
+        var names = await NamesAsync(db, companyId, cancellationToken);
         var next = rows.Count > filter.Limit ? AuditFilter.EncodeCursor(page[^1]) : null;
-        return Results.Json(new AuditPageResponse([.. page.Select(a => ToResponse(a, keyNames))], next));
+        return Results.Json(new AuditPageResponse([.. page.Select(a => ToResponse(a, names))], next));
     }
 
     private static async Task<IResult> ExportAsync(HttpRequest request, ClaimsPrincipal principal, UserManager<PortalUser> users, MCPalDbContext db, TimeProvider time, CancellationToken cancellationToken)
@@ -82,7 +88,7 @@ internal static class AuditEndpoints
             return PortalEndpoints.Problems(errors);
         }
 
-        var keyNames = await KeyNamesAsync(db, companyId, cancellationToken);
+        var names = await NamesAsync(db, companyId, cancellationToken);
         var query = filter.Apply(db.ToolCallAudits.AsNoTracking().Where(a => a.CompanyId == companyId))
             .OrderByDescending(a => a.OccurredAt).ThenByDescending(a => a.Id)
             .Take(MaxExportRows);
@@ -93,12 +99,14 @@ internal static class AuditEndpoints
             await writer.WriteLineAsync(string.Join(',', CsvColumns));
             await foreach (var audit in query.AsAsyncEnumerable().WithCancellation(cancellationToken))
             {
-                var entry = ToResponse(audit, keyNames);
+                var entry = ToResponse(audit, names);
                 await writer.WriteLineAsync(string.Join(',', new[]
                 {
                     Cell(entry.OccurredAt.ToString("O", CultureInfo.InvariantCulture)),
                     entry.DurationMs.ToString(CultureInfo.InvariantCulture),
                     Cell(entry.AuthKind),
+                    Cell(entry.UserId),
+                    Cell(entry.UserEmail),
                     Cell(entry.ApiKeyId?.ToString()),
                     Cell(entry.ApiKeyName),
                     Cell(entry.OAuthClientId),
@@ -113,16 +121,22 @@ internal static class AuditEndpoints
         }, "text/csv", fileName);
     }
 
-    private static async Task<Dictionary<Guid, string>> KeyNamesAsync(MCPalDbContext db, Guid companyId, CancellationToken cancellationToken) =>
-        await db.ApiKeys.AsNoTracking().Where(k => k.CompanyId == companyId).ToDictionaryAsync(k => k.Id, k => k.Name, cancellationToken);
+    /// <summary>Names of the keys and users of the company, to show instead of ids. A removed user or key has no name left.</summary>
+    private sealed record Names(Dictionary<Guid, string> Keys, Dictionary<string, string> UserEmails);
 
-    private static AuditEntryResponse ToResponse(ToolCallAudit a, Dictionary<Guid, string> keyNames) => new(
+    private static async Task<Names> NamesAsync(MCPalDbContext db, Guid companyId, CancellationToken cancellationToken) => new(
+        await db.ApiKeys.AsNoTracking().Where(k => k.CompanyId == companyId).ToDictionaryAsync(k => k.Id, k => k.Name, cancellationToken),
+        await db.Users.AsNoTracking().Where(u => u.CompanyId == companyId).ToDictionaryAsync(u => u.Id, u => u.Email ?? string.Empty, cancellationToken));
+
+    private static AuditEntryResponse ToResponse(ToolCallAudit a, Names names) => new(
         a.Id,
         a.OccurredAt,
         a.DurationMs,
         a.AuthKind,
+        a.UserId,
+        a.UserId is { } userId ? names.UserEmails.GetValueOrDefault(userId) : null,
         a.ApiKeyId,
-        a.ApiKeyId is { } keyId ? keyNames.GetValueOrDefault(keyId) : null,
+        a.ApiKeyId is { } keyId ? names.Keys.GetValueOrDefault(keyId) : null,
         a.OAuthClientId,
         a.BridgeName,
         a.ServerName,
@@ -161,6 +175,7 @@ internal sealed class AuditFilter
     private DateTimeOffset? to;
     private string? tool;
     private Guid? keyId;
+    private string? userId;
     private string? outcome;
     private (DateTimeOffset OccurredAt, Guid Id)? cursor;
 
@@ -184,6 +199,18 @@ internal sealed class AuditFilter
             else
             {
                 errors.Add("'keyId' must be a GUID.");
+            }
+        }
+
+        if (query["userId"].ToString() is { Length: > 0 } userText)
+        {
+            if (userText.Length <= AuditColumns.UserId)
+            {
+                filter.userId = userText;
+            }
+            else
+            {
+                errors.Add("'userId' is not valid.");
             }
         }
 
@@ -252,6 +279,11 @@ internal sealed class AuditFilter
         if (keyId is { } key)
         {
             query = query.Where(a => a.ApiKeyId == key);
+        }
+
+        if (userId is { } user)
+        {
+            query = query.Where(a => a.UserId == user);
         }
 
         if (outcome is { } result)

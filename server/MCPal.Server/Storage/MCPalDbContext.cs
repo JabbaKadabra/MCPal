@@ -127,6 +127,7 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
         {
             audit.HasKey(a => a.Id);
             audit.Property(a => a.AuthKind).HasMaxLength(AuditColumns.AuthKind);
+            audit.Property(a => a.UserId).HasMaxLength(AuditColumns.UserId);
             audit.Property(a => a.OAuthClientId).HasMaxLength(AuditColumns.OAuthClientId);
             audit.Property(a => a.BridgeName).HasMaxLength(AuditColumns.Name);
             audit.Property(a => a.ServerName).HasMaxLength(AuditColumns.Name);
@@ -136,6 +137,7 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             audit.Property(a => a.ErrorMessage).HasMaxLength(AuditColumns.ErrorMessage);
             audit.HasIndex(a => new { a.CompanyId, a.OccurredAt });
             audit.HasIndex(a => a.OccurredAt);
+            audit.HasIndex(a => new { a.CompanyId, a.UserId, a.OccurredAt });
             audit.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
