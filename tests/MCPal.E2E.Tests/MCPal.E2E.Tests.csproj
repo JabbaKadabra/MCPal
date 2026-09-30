@@ -3,7 +3,11 @@
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="NSubstitute.Analyzers.CSharp" />
     <PackageReference Include="NUnit" />
@@ -20,7 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/MCPal.Cloud/MCPal.Cloud.csproj" />
     <ProjectReference Include="../../src/MCPal.Agent/MCPal.Agent.csproj" />
-    <ProjectReference Include="../MCPal.TestMcpServer/MCPal.TestMcpServer.csproj" />
+    <ProjectReference Include="../MCPal.TestMcpServer/MCPal.TestMcpServer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
