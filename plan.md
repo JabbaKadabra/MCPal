@@ -1,6 +1,6 @@
 # MCPal — reverse-tunnel MCP relay: design spec + implementation plan
 
-Date: 2026-09-29, updated 2026-09-30. Status: design approved in brainstorming (sections 1–9, with "Agent" entity dropped in favour of API-key-authenticated tunnels). **Phase 1 (scaffold) done, not yet committed.** See [Status and handoff](#status-and-handoff) at the end for the next steps.
+Date: 2026-09-29, updated 2026-09-30. Status: design approved in brainstorming (sections 1–9, with "Agent" entity dropped in favour of API-key-authenticated tunnels). **MVP implemented (phases 1–11), tested and committed.** See [Status and handoff](#status-and-handoff) at the end.
 
 ## Context
 
@@ -223,27 +223,21 @@ Skills `nordstein-code-basics` and `nordstein-code-csharp` apply. Key points for
 
 ## Status and handoff
 
-### Done (phase 1, 2026-09-30)
-- Projects created and in `MCPal.sln`: `src/MCPal.Contracts` (empty), `src/MCPal.Cloud` (Autofac host, only `GET /health` via health checks, port 8080 in `launchSettings.json`), `src/MCPal.Agent` (Autofac worker host, no services yet), `tests/MCPal.Cloud.Tests` (1 test: `HealthEndpointTests`), `tests/MCPal.Agent.Tests` and `tests/MCPal.E2E.Tests` (empty), `tests/MCPal.TestMcpServer` (placeholder `Program.cs`).
-- `src/MCPal.Cloud/Dockerfile`: .NET-only multi-stage build, runs as non-root `$APP_UID`. The node stage for the SPA is still missing (phase 11).
-- `docker-compose.yml`: `cloud` + `postgres:17` with healthcheck, volumes `cloud-keys` (`/data/keys`) and `postgres-data`. Env vars `ConnectionStrings__Mcpal`, `Mcpal__PublicUrl`, `Mcpal__DataProtectionPath` are set but not yet read by the code.
-- `README.md` rewritten (layout, dev commands, license). Spec copied to `docs/superpowers/specs/2026-09-29-mcpal-design.md` (original version; this file is newer).
-- Verified: `dotnet build MCPal.sln` 0 warnings / 0 errors; `dotnet test MCPal.sln` 1/1 passed (empty test projects exit 0); `docker compose up` → `curl localhost:8080/health` returns `Healthy`.
-- Not included: `src/MCPal.Web` (Vite scaffold is phase 10).
+### Done (2026-09-30): phases 1–11
+- Cloud, agent, contracts, OAuth server, portal API, React SPA, Docker packaging and docs are implemented; see `README.md`, `docs/tunnel-protocol.md`, `docs/oauth.md`.
+- Verified: `dotnet build MCPal.sln` 0 warnings; `dotnet test` green (Agent 20, Cloud 123, E2E 7, all with Docker/Testcontainers); `npm test` in `src/MCPal.Web` 23 passed; `docker compose up --build` serves the SPA, signup → key → agent → `/mcp` `initialize`, `tools/list`, `tools/call` verified with curl; agent publishes as a single file for `linux-x64` and `win-x64` (`scripts/publish-agent.sh`).
 
-### Open items before phase 2
-1. Commit phase 1 (nothing is committed yet; `git status` shows everything untracked, `README.md` modified).
-2. Decide whether `plan.md` at the repo root stays (working copy) or only `docs/superpowers/specs/…` is kept; sync the two.
-3. Check the `/data/keys` volume permissions for the non-root container user before phase 9 uses Data Protection (named volume is created as root; may need `RUN mkdir -p /data/keys && chown $APP_UID /data/keys` in the Dockerfile).
-4. NUnit 5.0.0 is new; if analyzer or adapter problems show up, fall back to NUnit 4.x in `Directory.Packages.props`.
+### Deviations from the plan
+- Entities are internal mutable classes used by EF directly (`Tenancy/Entities.cs`, `OAuth/Entities.cs`), not the five-file interface/record/generator/config pattern. No global query filters; no `UpdatedAt` concurrency token yet.
+- The OAuth challenge and protected-resource metadata are our own minimal implementation, not the SDK's `AddMcp` authentication extension.
+- Tunnel calls use `ISingleClientProxy.InvokeAsync` on the untyped `IHubContext<AgentHub>`; the agent registers the handler with `On<TRequest, TResult>(name, Func<TRequest, Task<TResult>>)` (a client-result handler cannot take a `CancellationToken`).
+- `ConnectionRegistry` is an immutable snapshot updated by compare-and-swap (no locks). The agent has one `AsyncLock` (the only `SemaphoreSlim` user).
+- Logging analyzers CA1848/CA1873 are disabled in `Directory.Build.props` (low-volume logging).
+- Agent has console logging only (no rolling file provider); systemd/journald and the Windows event log cover services.
+- Migrations live in `src/MCPal.Cloud/Storage/Migrations`; tests clone a migrated template database per test.
+- SPA i18n is a small typed `t()` helper with an English dictionary (`src/MCPal.Web/src/i18n`).
 
-### Next steps
-1. **Phase 2 — Contracts + ToolNaming.** Write tests first.
-   - `MCPal.Contracts`: records `AgentCatalog`, `ServerCatalog`, `ToolDescriptor`, `CallToolRequest`, `CallToolResponse`, `RegisterResult` (+ rejected-server record with reason), `IAgentHubClient`, hub-method interface for `Register`/`ToolsChanged`, `ProtocolVersion` constant. Schema/content as JSON strings. No package references.
-   - `ToolNaming` in `MCPal.Cloud/Tunnel/`: sanitize to `[A-Za-z0-9_-]`, `server__tool`, ≤ 64 chars with truncate + 6-char hash suffix. Tests in `MCPal.Cloud.Tests/Tunnel/`, including collisions, unicode, max length, determinism.
-   - Consider a `MCPal.Contracts` serialization round-trip test (System.Text.Json) in `MCPal.Cloud.Tests` or a new `MCPal.Contracts.Tests`.
-2. **Phase 3 — Storage + Tenancy.** Add packages `Npgsql.EntityFrameworkCore.PostgreSQL`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, `Microsoft.EntityFrameworkCore.Design`, `Testcontainers.PostgreSql`, `Microsoft.Extensions.TimeProvider.Testing` to `Directory.Packages.props`. Build the test base harness (fresh Autofac container per test, Testcontainers Postgres, inconclusive when Docker is missing). Then `MCPalDbContext`, entities, first migration, `ApiKeyService`.
-3. **Phase 4 onward** as in the implementation plan above. Before phase 5/6 re-verify ModelContextProtocol SDK 2.2.0 member names (see research notes).
-
-Each phase ends with `dotnet build` at zero warnings, `dotnet test` green, and a commit.
-
+### Not done / next
+- Real claude.ai verification with a public TLS URL (verification steps 5 and 6 of this plan) still needs a deployed instance.
+- Playwright smoke tests for the SPA; performance suite; audit log; password reset and email confirmation; platform-admin tooling.
+- Scale-out (Redis backplane + routing tool calls to the instance owning the tunnel), MCP resources and prompts, CIMD, installers, billing, Skill→MCP generator.

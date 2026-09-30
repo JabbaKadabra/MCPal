@@ -95,6 +95,8 @@ Configuration (environment variables use `__` for `:`):
 | `Mcpal__McpRequestsPerMinute` | 600 | Rate limit per bearer token on `/mcp` |
 | `Mcpal__MigrateOnStartup` | true | Apply EF Core migrations at startup |
 
+Behind a TLS-terminating reverse proxy set `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` so rate limiting sees client addresses and cookies get the `Secure` flag; the proxy must allow WebSockets on `/hub/agent` and must not buffer `/mcp` responses (streamable HTTP).
+
 ## Limits of the MVP
 
 - Single cloud instance (the connection registry is in memory). Scale-out needs a backplane and routing of tool calls to the instance that owns the tunnel.

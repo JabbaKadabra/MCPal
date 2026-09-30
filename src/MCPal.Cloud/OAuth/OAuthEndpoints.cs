@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using MCPal.Cloud.Portal;
 using MCPal.Cloud.Tenancy;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
@@ -53,10 +54,10 @@ internal static class OAuthEndpoints
         app.MapGet("/.well-known/oauth-protected-resource", ProtectedResourceMetadata);
         app.MapGet("/.well-known/oauth-protected-resource/mcp", ProtectedResourceMetadata);
         app.MapGet("/.well-known/oauth-authorization-server", AuthorizationServerMetadata);
-        app.MapPost("/oauth/register", RegisterAsync);
-        app.MapPost("/oauth/token", TokenAsync);
-        app.MapGet("/api/oauth/authorize/context", AuthorizeContextAsync);
-        app.MapPost("/api/oauth/authorize", AuthorizeAsync);
+        app.MapPost("/oauth/register", RegisterAsync).RequireRateLimiting(PortalEndpoints.RateLimitPolicy);
+        app.MapPost("/oauth/token", TokenAsync).RequireRateLimiting(PortalEndpoints.RateLimitPolicy);
+        app.MapGet("/api/oauth/authorize/context", AuthorizeContextAsync).RequireRateLimiting(PortalEndpoints.RateLimitPolicy);
+        app.MapPost("/api/oauth/authorize", AuthorizeAsync).RequireRateLimiting(PortalEndpoints.RateLimitPolicy);
     }
 
     private static IResult ProtectedResourceMetadata(IOptions<McpalOptions> options)
