@@ -31,7 +31,7 @@ internal sealed class CallRelay(
         var request = new CallToolRequest(
             Guid.NewGuid().ToString("N"),
             tool.ServerName,
-            tool.Tool.Name,
+            tool.Descriptor.Name,
             JsonSerializer.Serialize(arguments ?? new Dictionary<string, JsonElement>(), McpJsonUtilities.DefaultOptions));
         try
         {

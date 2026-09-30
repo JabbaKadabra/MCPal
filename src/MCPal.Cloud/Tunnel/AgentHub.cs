@@ -9,14 +9,25 @@ namespace MCPal.Cloud.Tunnel;
 /// Tunnel endpoint for agents. Company and API key come from the authenticated principal, never from the payload.
 /// </summary>
 [Authorize(AuthenticationSchemes = McpBearerDefaults.Scheme, Policy = McpBearerDefaults.TunnelPolicy)]
-internal sealed class AgentHub(ConnectionRegistry registry, TimeProvider timeProvider, ILogger<AgentHub> logger) : Hub, IAgentHubServer
+internal sealed class AgentHub(ConnectionRegistry registry, IApiKeyService apiKeys, TimeProvider timeProvider, ILogger<AgentHub> logger) : Hub, IAgentHubServer
 {
-    public override Task OnConnectedAsync()
+    public override async Task OnConnectedAsync()
     {
         var (companyId, apiKeyId) = Identify();
         registry.Add(companyId, Context.ConnectionId, apiKeyId, timeProvider.GetUtcNow(), Context.Abort);
+
+        // A revoke between authentication and Add found no tunnel to close. Checking after Add closes that gap:
+        // a later revoke finds the tunnel in the registry, an earlier one is seen here.
+        if (!await apiKeys.IsActiveAsync(companyId, apiKeyId, Context.ConnectionAborted))
+        {
+            registry.Remove(companyId, Context.ConnectionId);
+            logger.LogInformation("Agent tunnel refused: key {ApiKeyId} of company {CompanyId} is no longer active", apiKeyId, companyId);
+            Context.Abort();
+            return;
+        }
+
         logger.LogInformation("Agent tunnel connected: company {CompanyId}, connection {ConnectionId}", companyId, Context.ConnectionId);
-        return base.OnConnectedAsync();
+        await base.OnConnectedAsync();
     }
 
     public override Task OnDisconnectedAsync(Exception? exception)
@@ -37,6 +48,7 @@ internal sealed class AgentHub(ConnectionRegistry registry, TimeProvider timePro
             return Task.FromResult(new RegisterResult(
                 false,
                 [],
+                [],
                 $"Unsupported protocol version '{catalog.ProtocolVersion}'. This cloud speaks protocol major {ProtocolVersion.Major}."));
         }
 
@@ -46,13 +58,12 @@ internal sealed class AgentHub(ConnectionRegistry registry, TimeProvider timePro
             logger.LogWarning("Server '{Server}' of company {CompanyId} rejected: {Reason}", rejected.ServerName, companyId, rejected.Reason);
         }
 
-        return Task.FromResult(result);
-    }
+        foreach (var rejected in result.RejectedTools)
+        {
+            logger.LogWarning("Tool '{Tool}' of server '{Server}' of company {CompanyId} rejected: {Reason}", rejected.ToolName, rejected.ServerName, companyId, rejected.Reason);
+        }
 
-    public Task ToolsChanged(AgentCatalog catalog)
-    {
-        Register(catalog);
-        return Task.CompletedTask;
+        return Task.FromResult(result);
     }
 
     private (Guid CompanyId, Guid ApiKeyId) Identify()

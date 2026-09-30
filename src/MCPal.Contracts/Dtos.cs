@@ -9,7 +9,10 @@ public sealed record AgentCatalog(string AgentName, string AgentVersion, string 
 
 public sealed record RejectedServer(string ServerName, string Reason);
 
-public sealed record RegisterResult(bool Accepted, IReadOnlyList<RejectedServer> RejectedServers, string? Message);
+/// <summary>A tool of an accepted server that the cloud does not expose, e.g. because its schema is invalid or its public name is taken.</summary>
+public sealed record RejectedTool(string ServerName, string ToolName, string Reason);
+
+public sealed record RegisterResult(bool Accepted, IReadOnlyList<RejectedServer> RejectedServers, IReadOnlyList<RejectedTool> RejectedTools, string? Message);
 
 public sealed record CallToolRequest(string RequestId, string ServerName, string ToolName, string ArgumentsJson);
 

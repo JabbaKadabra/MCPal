@@ -8,6 +8,9 @@ namespace MCPal.Cloud.Tenancy;
 internal static class McpBearerDefaults
 {
     public const string Scheme = "McpBearer";
+
+    /// <summary>Default authenticate scheme: bearer requests use <see cref="Scheme"/>, all others the portal cookie.</summary>
+    public const string SelectorScheme = "McpBearerOrCookie";
     public const string TunnelPolicy = "Tunnel";
     public const string McpPolicy = "McpBearer";
 }
@@ -26,20 +29,20 @@ internal sealed class McpBearerAuthenticationHandler(
 {
     private const string BearerPrefix = "Bearer ";
 
+    public static bool HasBearer(HttpRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request.Headers.Authorization.ToString().StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        var header = Request.Headers.Authorization.ToString();
-        if (string.IsNullOrEmpty(header))
+        if (!HasBearer(Request))
         {
             return AuthenticateResult.NoResult();
         }
 
-        if (!header.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return AuthenticateResult.NoResult();
-        }
-
-        var token = header[BearerPrefix.Length..].Trim();
+        var token = Request.Headers.Authorization.ToString()[BearerPrefix.Length..].Trim();
         var claims = token.StartsWith(ApiKeyService.KeyPrefix, StringComparison.Ordinal)
             ? await AuthenticateApiKeyAsync(token)
             : await AuthenticateAccessTokenAsync(token);

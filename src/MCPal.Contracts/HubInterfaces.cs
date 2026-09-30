@@ -9,7 +9,6 @@ public interface IAgentHubClient
 /// <summary>Agent to cloud hub methods.</summary>
 public interface IAgentHubServer
 {
+    /// <summary>Registers the agent's catalog. Every call replaces the catalog of this connection.</summary>
     Task<RegisterResult> Register(AgentCatalog catalog);
-
-    Task ToolsChanged(AgentCatalog catalog);
 }

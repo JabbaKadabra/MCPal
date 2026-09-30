@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
@@ -25,7 +26,13 @@ internal static class CloudWebServices
         services.AddHealthChecks();
 
         services.AddAuthentication()
-            .AddScheme<AuthenticationSchemeOptions, McpBearerAuthenticationHandler>(McpBearerDefaults.Scheme, null);
+            .AddScheme<AuthenticationSchemeOptions, McpBearerAuthenticationHandler>(McpBearerDefaults.Scheme, null)
+            .AddPolicyScheme(McpBearerDefaults.SelectorScheme, null, options => options.ForwardDefaultSelector = context =>
+                McpBearerAuthenticationHandler.HasBearer(context.Request) ? McpBearerDefaults.Scheme : IdentityConstants.ApplicationScheme);
+
+        // UseAuthentication must know the bearer principal before the rate limiter partitions on it. PostConfigure because
+        // AddIdentity sets the cookie as default authenticate scheme.
+        services.PostConfigure<AuthenticationOptions>(options => options.DefaultAuthenticateScheme = McpBearerDefaults.SelectorScheme);
         services.AddAuthorizationBuilder()
             .AddPolicy(McpBearerDefaults.McpPolicy, policy => policy
                 .AddAuthenticationSchemes(McpBearerDefaults.Scheme)
@@ -51,6 +58,7 @@ internal static class CloudWebServices
             options.Cookie.Name = "mcpal.portal";
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
             options.ExpireTimeSpan = TimeSpan.FromDays(7);
             options.SlidingExpiration = true;
             options.Events.OnRedirectToLogin = context =>
@@ -73,6 +81,18 @@ internal static class CloudWebServices
             options.HeaderName = "X-CSRF-TOKEN";
             options.Cookie.Name = "mcpal.csrf";
             options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        });
+
+        // Behind a TLS-terminating proxy the client IP (rate limits) and the scheme (Secure cookies) come from
+        // X-Forwarded-For/-Proto, accepted only from loopback and the configured proxy networks.
+        services.AddOptions<ForwardedHeadersOptions>().Configure<IOptions<McpalOptions>>((forwarded, mcpal) =>
+        {
+            forwarded.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            foreach (var network in mcpal.Value.TrustedProxyNetworks)
+            {
+                forwarded.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+            }
         });
         services.AddDataProtection().SetApplicationName("MCPal");
         services.AddOptions<KeyManagementOptions>().Configure<IOptions<McpalOptions>, ILoggerFactory>((keys, mcpal, loggers) =>
@@ -111,9 +131,11 @@ internal static class CloudWebServices
             options.AddPolicy(McpRateLimitPolicy, context =>
             {
                 var limit = context.RequestServices.GetRequiredService<IOptions<McpalOptions>>().Value.McpRequestsPerMinute;
-                var authorization = context.Request.Headers.Authorization.ToString();
-                var partition = authorization.Length > 0
-                    ? ApiKeyService.Hash(authorization)
+
+                // Validated principals only: a request with an unknown token shares its IP's bucket instead of getting its own.
+                var user = context.User;
+                var partition = user.Identity is { IsAuthenticated: true, AuthenticationType: McpBearerDefaults.Scheme }
+                    ? user.GetApiKeyId() is { } apiKeyId ? "key:" + apiKeyId : "company:" + user.GetCompanyId()
                     : "ip:" + context.Connection.RemoteIpAddress;
                 return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
                 {

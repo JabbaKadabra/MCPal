@@ -28,6 +28,9 @@ internal interface IApiKeyService
 
     /// <summary>Whether the key exists, is enabled, unexpired and its company is enabled.</summary>
     Task<bool> IsActiveAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken);
+
+    /// <summary>The subset of the given keys that is active, with the company each belongs to.</summary>
+    Task<IReadOnlyList<ValidatedKey>> ActiveKeysAsync(IReadOnlyCollection<Guid> apiKeyIds, CancellationToken cancellationToken);
 }
 
 internal sealed class ApiKeyService(
@@ -38,7 +41,9 @@ internal sealed class ApiKeyService(
     public const string KeyPrefix = "mcpal_";
 
     private const int SecretLength = 40;
-    private const int DisplayPrefixLength = 14;
+
+    /// <summary>"mcpal_" + 8 company characters + "_" + 6 secret characters, so keys of one company can be told apart.</summary>
+    private const int DisplayPrefixLength = 21;
     private static readonly TimeSpan LastUsedThrottle = TimeSpan.FromMinutes(5);
 
     public async Task<CreatedApiKey> CreateAsync(Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
@@ -72,10 +77,11 @@ internal sealed class ApiKeyService(
         var hash = Hash(rawKey);
         var now = timeProvider.GetUtcNow();
         var key = await db.ApiKeys.AsNoTracking()
+            .Active(db.Companies, now)
             .Where(k => k.KeyHash == hash)
-            .Select(k => new { k.Id, k.CompanyId, k.Disabled, k.ExpiresAt, k.LastUsedAt, CompanyActive = db.Companies.Any(c => c.Id == k.CompanyId && !c.Disabled) })
+            .Select(k => new { k.Id, k.CompanyId, k.LastUsedAt })
             .FirstOrDefaultAsync(cancellationToken);
-        if (key is null || key.Disabled || !key.CompanyActive || (key.ExpiresAt is { } expiresAt && expiresAt <= now))
+        if (key is null)
         {
             return null;
         }
@@ -116,14 +122,20 @@ internal sealed class ApiKeyService(
 
     public async Task<bool> IsActiveAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
-        return await db.ApiKeys.AsNoTracking().AnyAsync(
-            k => k.Id == apiKeyId
-                && k.CompanyId == companyId
-                && !k.Disabled
-                && (k.ExpiresAt == null || k.ExpiresAt > now)
-                && db.Companies.Any(c => c.Id == k.CompanyId && !c.Disabled),
-            cancellationToken);
+        return await db.ApiKeys.AsNoTracking()
+            .Active(db.Companies, timeProvider.GetUtcNow())
+            .AnyAsync(k => k.Id == apiKeyId && k.CompanyId == companyId, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ValidatedKey>> ActiveKeysAsync(IReadOnlyCollection<Guid> apiKeyIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(apiKeyIds);
+
+        return await db.ApiKeys.AsNoTracking()
+            .Active(db.Companies, timeProvider.GetUtcNow())
+            .Where(k => apiKeyIds.Contains(k.Id))
+            .Select(k => new ValidatedKey(k.CompanyId, k.Id))
+            .ToListAsync(cancellationToken);
     }
 
     internal static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

@@ -27,11 +27,16 @@ export function ConnectionsPage() {
               </li>
             ))}
           </ul>
-          {connection.rejected.length > 0 && (
+          {(connection.rejected.length > 0 || connection.rejectedTools.length > 0) && (
             <ul className="errors">
               {connection.rejected.map((rejected) => (
                 <li key={rejected.server}>
                   {t('connections.rejected')}: {rejected.server} — {rejected.reason}
+                </li>
+              ))}
+              {connection.rejectedTools.map((rejected) => (
+                <li key={`${rejected.server}/${rejected.tool}`}>
+                  {t('connections.rejectedTool')}: {`${rejected.server} / ${rejected.tool}`} — {rejected.reason}
                 </li>
               ))}
             </ul>

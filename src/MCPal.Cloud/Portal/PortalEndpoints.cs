@@ -26,12 +26,15 @@ internal sealed record ServerResponse(string Name, IReadOnlyList<string> Tools);
 
 internal sealed record RejectedServerResponse(string Server, string Reason);
 
+internal sealed record RejectedToolResponse(string Server, string Tool, string Reason);
+
 internal sealed record ConnectionResponse(
     string AgentName,
     DateTimeOffset ConnectedAt,
     string? ApiKeyName,
     IReadOnlyList<ServerResponse> Servers,
-    IReadOnlyList<RejectedServerResponse> Rejected);
+    IReadOnlyList<RejectedServerResponse> Rejected,
+    IReadOnlyList<RejectedToolResponse> RejectedTools);
 
 internal sealed record ConnectInfoResponse(string McpUrl, string Issuer, string ClaudeCodeCommand, string ClaudeCodeCommandWithHeader);
 
@@ -72,6 +75,7 @@ internal static class PortalEndpoints
         UserManager<PortalUser> users,
         SignInManager<PortalUser> signIn,
         ICompanyService companies,
+        MCPalDbContext db,
         CancellationToken cancellationToken)
     {
         var problems = new List<string>();
@@ -95,14 +99,18 @@ internal static class PortalEndpoints
             return Problems(["An account with this email already exists."]);
         }
 
+        // Company and user share one transaction: a rejected password or email must not leave a company (and its slug) behind.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var company = await companies.CreateAsync(request.CompanyName, cancellationToken);
         var user = new PortalUser { UserName = request.Email, Email = request.Email, CompanyId = company.Id };
         var created = await users.CreateAsync(user, request.Password);
         if (!created.Succeeded)
         {
+            await transaction.RollbackAsync(cancellationToken);
             return Problems([.. created.Errors.Select(e => e.Description)]);
         }
 
+        await transaction.CommitAsync(cancellationToken);
         await signIn.SignInAsync(user, isPersistent: true);
         return Results.Json(new MeResponse(request.Email, company.Id, company.Name), statusCode: 201);
     }
@@ -202,8 +210,9 @@ internal static class PortalEndpoints
             c.AgentName,
             c.ConnectedAt,
             keyNames.GetValueOrDefault(c.ApiKeyId),
-            [.. c.Servers.Select(s => new ServerResponse(s.Name, [.. s.Tools.Select(t => t.Tool.Name)]))],
-            [.. c.Rejected.Select(r => new RejectedServerResponse(r.ServerName, r.Reason))]));
+            [.. c.Servers.Select(s => new ServerResponse(s.Name, [.. s.Tools.Select(t => t.Descriptor.Name)]))],
+            [.. c.RejectedServers.Select(r => new RejectedServerResponse(r.ServerName, r.Reason))],
+            [.. c.RejectedTools.Select(r => new RejectedToolResponse(r.ServerName, r.ToolName, r.Reason))]));
         return Results.Json(connections);
     }
 

@@ -1,4 +1,9 @@
 using System.Diagnostics;
+using MCPal.Cloud.Tunnel;
+using MCPal.Contracts;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol.Protocol;
 
 namespace MCPal.E2E.Tests;
@@ -115,6 +120,36 @@ internal sealed class EndToEndTests
         acmeTools.Should().OnlyContain(t => t.Name.StartsWith("alpha__", StringComparison.Ordinal));
         crossCall.IsError.Should().BeTrue();
         TextOf(crossCall).Should().Contain("not available");
+    }
+
+    [Test]
+    public async Task ServerNameHeldByStaleConnection_AgentRegistersItOnceFreed()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct);
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        var stale = stack.CreateTunnelConnection(acme.RawKey);
+        await stale.StartAsync(Ct);
+        var catalog = new AgentCatalog("hq-01", "1.0", ProtocolVersion.Current, [new ServerCatalog("test", [new ToolDescriptor("old", null, null, "{\"type\":\"object\"}", null)])]);
+        await stale.InvokeAsync<RegisterResult>("Register", catalog, Ct);
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, time);
+        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await E2EStack.WaitForToolAsync(client, "test__old", Ct);
+        var registry = stack.Services.GetRequiredService<ConnectionRegistry>();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        while (!registry.Connections(acme.CompanyId).Any(c => c.RejectedServers.Count > 0))
+        {
+            await Task.Delay(50, timeout.Token);
+        }
+
+        await stale.DisposeAsync();
+
+        while (!(await client.ListToolsAsync(cancellationToken: timeout.Token)).Any(t => t.Name == "test__echo"))
+        {
+            time.Advance(TimeSpan.FromSeconds(31));
+            await Task.Delay(100, timeout.Token);
+        }
     }
 
     [Test]

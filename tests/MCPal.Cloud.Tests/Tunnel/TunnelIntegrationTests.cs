@@ -145,6 +145,46 @@ internal sealed class TunnelIntegrationTests
         registry.Tools(acme.CompanyId).Should().BeEmpty();
     }
 
+    [Test]
+    public async Task Connect_KeyRevokedBeforeTunnelIsRegistered_ClosesTunnel()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(
+            Ct,
+            configureContainer: container => container.RegisterDecorator<KeyRevokedAfterAuthentication, IApiKeyService>());
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var registry = factory.Services.GetRequiredService<ConnectionRegistry>();
+        await using var connection = factory.CreateAgentConnection(acme.RawKey);
+        var closed = new TaskCompletionSource();
+        connection.Closed += _ =>
+        {
+            closed.TrySetResult();
+            return Task.CompletedTask;
+        };
+
+        await connection.StartAsync(Ct);
+
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        registry.Connections(acme.CompanyId).Should().BeEmpty();
+    }
+
+    /// <summary>Authenticates the key, then reports it inactive: the state after a revoke that lands during the handshake.</summary>
+    private sealed class KeyRevokedAfterAuthentication(IApiKeyService inner) : IApiKeyService
+    {
+        public Task<CreatedApiKey> CreateAsync(Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken) =>
+            inner.CreateAsync(companyId, name, expiresAt, cancellationToken);
+
+        public Task<ValidatedKey?> ValidateAsync(string rawKey, CancellationToken cancellationToken) => inner.ValidateAsync(rawKey, cancellationToken);
+
+        public Task<IReadOnlyList<ApiKey>> ListAsync(Guid companyId, CancellationToken cancellationToken) => inner.ListAsync(companyId, cancellationToken);
+
+        public Task<bool> RevokeAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken) => inner.RevokeAsync(companyId, apiKeyId, cancellationToken);
+
+        public Task<bool> IsActiveAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task<IReadOnlyList<ValidatedKey>> ActiveKeysAsync(IReadOnlyCollection<Guid> apiKeyIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ValidatedKey>>([]);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);

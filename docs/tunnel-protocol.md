@@ -6,22 +6,22 @@ The agent keeps one outbound SignalR connection to `<cloud>/hub/agent` (WebSocke
 
 `Authorization: Bearer mcpal_<company>_<secret>` on every request of the connection. Only API keys open tunnels; OAuth access tokens are rejected (`Tunnel` policy requires `AuthKind=apikey`). The company and the key come from the authenticated principal, never from a message. Access tokens in the query string are ignored.
 
-Revoking the key in the portal closes all tunnels that used it.
+Revoking the key in the portal closes all tunnels that used it at once. Tunnels whose key expired or whose company was disabled are closed within a minute.
 
 ## Agent → cloud
 
 | Method | Payload | Result |
 |--------|---------|--------|
-| `Register` | `AgentCatalog { AgentName, AgentVersion, ProtocolVersion, Servers[] }` | `RegisterResult { Accepted, RejectedServers[], Message }` |
-| `ToolsChanged` | `AgentCatalog` (same shape, replaces the previous catalog) | – |
+| `Register` | `AgentCatalog { AgentName, AgentVersion, ProtocolVersion, Servers[] }` | `RegisterResult { Accepted, RejectedServers[], RejectedTools[], Message }` |
 
-The agent calls `Register` after connecting and after every automatic reconnect, and `ToolsChanged` when a local server reports `tools/list_changed` or its tools differ at the 30 s refresh.
+Every `Register` replaces the catalog of the connection. The agent calls it after connecting, after every automatic reconnect, when a local server reports `tools/list_changed`, and at the 30 s refresh when its tools changed or the last result rejected anything. The retry matters after a silent network drop: the cloud keeps the old connection (and its server names) until its 60 s client timeout, so the first `Register` of the new connection can be rejected.
 
 Rules enforced by the cloud:
 
 - `ProtocolVersion` major must equal the cloud's (`1`); otherwise `Accepted=false` with a message.
 - Server names are unique per company. A server whose name is held by another live connection is rejected (the others are accepted) and shown in the portal.
-- Public tool names are `sanitize(server) + "__" + sanitize(tool)` (`[A-Za-z0-9_-]`, at most 64 characters; longer names are truncated and get a 6-character hash suffix).
+- Public tool names are `sanitize(server) + "__" + sanitize(tool)` (`[A-Za-z0-9_-]`, at most 64 characters; longer names are truncated and get a 6-character hash suffix). A tool whose public name is already taken (e.g. servers `files.v2` and `files_v2`) is listed in `RejectedTools`; the first registration keeps the name.
+- A tool whose `InputSchemaJson` is not a JSON Schema object with `"type": "object"`, or whose `AnnotationsJson` are not valid MCP tool annotations, is listed in `RejectedTools`. The server's other tools are accepted.
 
 ## Cloud → agent
 

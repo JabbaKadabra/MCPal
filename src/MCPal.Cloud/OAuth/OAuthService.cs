@@ -221,11 +221,11 @@ internal sealed class OAuthService(
     {
         var hash = ApiKeyService.Hash(accessToken);
         var now = timeProvider.GetUtcNow();
+        var activeKeys = db.ApiKeys.Active(db.Companies, now);
         var token = await db.OAuthTokens.AsNoTracking()
             .Where(t => t.Hash == hash && t.Kind == OAuthTokenKind.Access && !t.Revoked && t.ExpiresAt > now)
             .Where(t => db.Companies.Any(c => c.Id == t.CompanyId && !c.Disabled))
-            .Where(t => t.ApiKeyId == null
-                || db.ApiKeys.Any(k => k.Id == t.ApiKeyId && k.CompanyId == t.CompanyId && !k.Disabled && (k.ExpiresAt == null || k.ExpiresAt > now)))
+            .Where(t => t.ApiKeyId == null || activeKeys.Any(k => k.Id == t.ApiKeyId && k.CompanyId == t.CompanyId))
             .Select(t => new ValidatedAccessToken(t.CompanyId, t.ApiKeyId))
             .FirstOrDefaultAsync(cancellationToken);
         return token;

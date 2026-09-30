@@ -1,21 +1,25 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using MCPal.Contracts;
+using ModelContextProtocol.Protocol;
 
 namespace MCPal.Cloud.Tunnel;
 
-internal sealed record RegisteredTool(string PublicName, string ServerName, ToolDescriptor Tool, string ConnectionId);
+/// <param name="Listing">The MCP tool as <c>tools/list</c> returns it, built and validated at registration.</param>
+internal sealed record RegisteredTool(string PublicName, string ServerName, ToolDescriptor Descriptor, Tool Listing, string ConnectionId);
 
 internal sealed record RegisteredServer(string Name, IReadOnlyList<RegisteredTool> Tools);
 
 internal sealed record ConnectionInfo(
+    Guid CompanyId,
     string ConnectionId,
     Guid ApiKeyId,
     DateTimeOffset ConnectedAt,
     Action Abort,
     string AgentName,
     IReadOnlyList<RegisteredServer> Servers,
-    IReadOnlyList<RejectedServer> Rejected);
+    IReadOnlyList<RejectedServer> RejectedServers,
+    IReadOnlyList<RejectedTool> RejectedTools);
 
 /// <summary>
 /// In-memory view of live agent tunnels, keyed by company first. Every lookup starts from the caller's company.
@@ -31,7 +35,7 @@ internal sealed class ConnectionRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
         ArgumentNullException.ThrowIfNull(abort);
 
-        var info = new ConnectionInfo(connectionId, apiKeyId, connectedAt, abort, string.Empty, [], []);
+        var info = new ConnectionInfo(companyId, connectionId, apiKeyId, connectedAt, abort, string.Empty, [], [], []);
         Update(current => (WithConnection(current, companyId, info), true));
     }
 
@@ -43,32 +47,33 @@ internal sealed class ConnectionRegistry
         {
             if (!current.TryGetValue(companyId, out var connections) || !connections.TryGetValue(connectionId, out var existing))
             {
-                return (current, new RegisterResult(false, [], "Connection is not known."));
+                return (current, new RegisterResult(false, [], [], "Connection is not known."));
             }
 
             var takenByOthers = connections
                 .Where(pair => pair.Key != connectionId)
                 .SelectMany(pair => pair.Value.Servers.Select(s => s.Name))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var usedPublicNames = connections
+            var publicNameOwners = connections
                 .Where(pair => pair.Key != connectionId)
-                .SelectMany(pair => pair.Value.Servers.SelectMany(s => s.Tools.Select(t => t.PublicName)))
-                .ToHashSet(StringComparer.Ordinal);
+                .SelectMany(pair => pair.Value.Servers.SelectMany(s => s.Tools))
+                .ToDictionary(t => t.PublicName, t => (t.ServerName, ToolName: t.Descriptor.Name), StringComparer.Ordinal);
 
             var accepted = new List<RegisteredServer>();
-            var rejected = new List<RejectedServer>();
+            var rejectedServers = new List<RejectedServer>();
+            var rejectedTools = new List<RejectedTool>();
             var ownNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var server in catalog.Servers)
             {
                 if (takenByOthers.Contains(server.Name))
                 {
-                    rejected.Add(new RejectedServer(server.Name, "Server name is already registered by another agent connection of this company."));
+                    rejectedServers.Add(new RejectedServer(server.Name, "Server name is already registered by another agent connection of this company."));
                     continue;
                 }
 
                 if (!ownNames.Add(server.Name))
                 {
-                    rejected.Add(new RejectedServer(server.Name, "Server name appears more than once in this agent."));
+                    rejectedServers.Add(new RejectedServer(server.Name, "Server name appears more than once in this agent."));
                     continue;
                 }
 
@@ -76,17 +81,30 @@ internal sealed class ConnectionRegistry
                 foreach (var tool in server.Tools)
                 {
                     var publicName = ToolNaming.Public(server.Name, tool.Name);
-                    if (usedPublicNames.Add(publicName))
+                    if (publicNameOwners.TryGetValue(publicName, out var owner))
                     {
-                        tools.Add(new RegisteredTool(publicName, server.Name, tool, connectionId));
+                        rejectedTools.Add(new RejectedTool(
+                            server.Name,
+                            tool.Name,
+                            $"Public tool name '{publicName}' is already used by tool '{owner.ToolName}' of server '{owner.ServerName}'. Rename the server or the tool."));
+                        continue;
                     }
+
+                    if (!ToolListing.TryCreate(publicName, server.Name, tool, out var listing, out var error))
+                    {
+                        rejectedTools.Add(new RejectedTool(server.Name, tool.Name, error));
+                        continue;
+                    }
+
+                    publicNameOwners.Add(publicName, (server.Name, tool.Name));
+                    tools.Add(new RegisteredTool(publicName, server.Name, tool, listing, connectionId));
                 }
 
                 accepted.Add(new RegisteredServer(server.Name, tools));
             }
 
-            var updated = existing with { AgentName = catalog.AgentName, Servers = accepted, Rejected = rejected };
-            return (WithConnection(current, companyId, updated), new RegisterResult(true, rejected, null));
+            var updated = existing with { AgentName = catalog.AgentName, Servers = accepted, RejectedServers = rejectedServers, RejectedTools = rejectedTools };
+            return (WithConnection(current, companyId, updated), new RegisterResult(true, rejectedServers, rejectedTools, null));
         });
     }
 
@@ -125,6 +143,12 @@ internal sealed class ConnectionRegistry
         return companies.TryGetValue(companyId, out var connections)
             ? [.. connections.Values.OrderBy(c => c.ConnectedAt).ThenBy(c => c.ConnectionId, StringComparer.Ordinal)]
             : [];
+    }
+
+    /// <summary>Every live connection of every company. Only for housekeeping, never to answer a tenant's request.</summary>
+    public IReadOnlyList<ConnectionInfo> AllConnections()
+    {
+        return [.. companies.Values.SelectMany(connections => connections.Values)];
     }
 
     public IReadOnlyList<ConnectionInfo> ConnectionsForKey(Guid companyId, Guid apiKeyId)

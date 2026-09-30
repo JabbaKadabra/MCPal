@@ -29,6 +29,7 @@ export interface Connection {
   apiKeyName: string | null;
   servers: { name: string; tools: string[] }[];
   rejected: { server: string; reason: string }[];
+  rejectedTools: { server: string; tool: string; reason: string }[];
 }
 
 export interface ConnectInfo {

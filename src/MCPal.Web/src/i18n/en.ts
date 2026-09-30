@@ -44,6 +44,7 @@ export const en = {
   'connections.key': 'key',
   'connections.tools': 'tools',
   'connections.rejected': 'Rejected',
+  'connections.rejectedTool': 'Tool not exposed',
   'connect.title': 'Connect Claude',
   'connect.step1': 'In claude.ai open Settings → Connectors → Add custom connector.',
   'connect.step2': 'Use this server URL:',

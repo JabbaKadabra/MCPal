@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using MCPal.Cloud.Tests.Infrastructure;
 using MCPal.Cloud.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MCPal.Cloud.Tests.Portal;
 
@@ -48,6 +49,21 @@ internal sealed class PortalApiTests
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await PortalClient.JsonAsync(response, Ct)).GetProperty("errors").GetArrayLength().Should().BeGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Signup_WeakPasswordThenRetry_LeavesNoOrphanCompanyAndKeepsSlug()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        using var portal = new PortalClient(factory);
+        (await portal.PostAsync("/api/portal/auth/signup", new { companyName = "Acme", email = "a@acme.example", password = "short" }, Ct)).Dispose();
+
+        using var retry = await portal.SignupAsync("Acme", "a@acme.example", Ct);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.Created);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var companies = await scope.ServiceProvider.GetRequiredService<MCPalDbContext>().Companies.AsNoTracking().ToListAsync(Ct);
+        companies.Should().ContainSingle().Which.Slug.Should().Be("acme");
     }
 
     [Test]
@@ -182,6 +198,7 @@ internal sealed class PortalApiTests
         list[0].GetProperty("apiKeyName").GetString().Should().Be("hq");
         list[0].GetProperty("servers")[0].GetProperty("name").GetString().Should().Be("kb");
         list[0].GetProperty("servers")[0].GetProperty("tools").GetArrayLength().Should().Be(2);
+        list[0].GetProperty("rejectedTools").GetArrayLength().Should().Be(0);
         (await PortalClient.JsonAsync(globexConnections, Ct)).GetArrayLength().Should().Be(0);
     }
 

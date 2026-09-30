@@ -56,6 +56,24 @@ internal sealed class McpEndpointTests
     }
 
     [Test]
+    public async Task ListTools_AgentRegisteredToolWithInvalidSchema_ListsTheOtherTools()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var catalog = new AgentCatalog("fake", "1.0", ProtocolVersion.Current, [new ServerCatalog("kb", [
+            new ToolDescriptor("search", null, "Find", "{\"type\":\"object\"}", null),
+            new ToolDescriptor("broken", null, "Bad", "not json", null),
+        ])]);
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, catalog, _ => Task.FromResult(FakeAgent.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var tools = await client.ListToolsAsync(cancellationToken: Ct);
+
+        tools.Select(t => t.Name).Should().Equal("kb__search");
+        agent.RegisterResult?.RejectedTools.Should().ContainSingle().Which.ToolName.Should().Be("broken");
+    }
+
+    [Test]
     public async Task CallTool_AgentRegistered_RelaysArgumentsAndReturnsAgentResult()
     {
         await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
@@ -180,5 +198,43 @@ internal sealed class McpEndpointTests
 
         statuses.Should().Contain(HttpStatusCode.TooManyRequests);
         statuses[0].Should().NotBe(HttpStatusCode.TooManyRequests);
+    }
+
+    [Test]
+    public async Task Post_DistinctInvalidTokens_ShareOneLimitAndGet429()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:McpRequestsPerMinute"] = "2" });
+        using var client = factory.CreateClient();
+        var statuses = new List<HttpStatusCode>();
+
+        for (var i = 0; i < 4; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", $"garbage-{Guid.NewGuid()}");
+            using var response = await client.SendAsync(request, Ct);
+            statuses.Add(response.StatusCode);
+        }
+
+        statuses.Should().Equal(HttpStatusCode.Unauthorized, HttpStatusCode.Unauthorized, HttpStatusCode.TooManyRequests, HttpStatusCode.TooManyRequests);
+    }
+
+    [Test]
+    public async Task Post_ValidKeyAfterInvalidTokensExhaustedIpLimit_IsStillServed()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:McpRequestsPerMinute"] = "2" });
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        using var client = factory.CreateClient();
+        for (var i = 0; i < 3; i++)
+        {
+            using var garbage = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
+            garbage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", $"garbage-{i}");
+            (await client.SendAsync(garbage, Ct)).Dispose();
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+        using var response = await client.SendAsync(request, Ct);
+
+        response.StatusCode.Should().NotBe(HttpStatusCode.TooManyRequests).And.NotBe(HttpStatusCode.Unauthorized);
     }
 }

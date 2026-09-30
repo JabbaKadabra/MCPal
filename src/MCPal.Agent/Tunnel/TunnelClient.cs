@@ -35,21 +35,31 @@ internal sealed class TunnelClient : BackgroundService
     private readonly AgentConfig config;
     private readonly ILocalServerManager manager;
     private readonly ITunnelTransportConfigurator transportConfigurator;
+    private readonly TimeProvider timeProvider;
     private readonly ILogger<TunnelClient> logger;
     private readonly Channel<bool> changeSignals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly AsyncLock registerLock = new();
+    /// <summary>Catalog the cloud fully accepted on this connection. Null while anything was rejected, so the refresh retries.</summary>
     private string? registeredFingerprint;
+    private string? lastResult;
 
-    public TunnelClient(AgentConfig config, ILocalServerManager manager, ITunnelTransportConfigurator transportConfigurator, ILogger<TunnelClient> logger)
+    public TunnelClient(
+        AgentConfig config,
+        ILocalServerManager manager,
+        ITunnelTransportConfigurator transportConfigurator,
+        TimeProvider timeProvider,
+        ILogger<TunnelClient> logger)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(transportConfigurator);
+        ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         this.config = config;
         this.manager = manager;
         this.transportConfigurator = transportConfigurator;
+        this.timeProvider = timeProvider;
         this.logger = logger;
         manager.ToolsChanged += () => changeSignals.Writer.TryWrite(true);
     }
@@ -65,7 +75,7 @@ internal sealed class TunnelClient : BackgroundService
         connection.Reconnected += async _ =>
         {
             logger.LogInformation("Tunnel reconnected");
-            await RegisterAsync(connection, "Register", stoppingToken);
+            await RegisterAsync(connection, force: true, stoppingToken);
         };
 
         try
@@ -100,7 +110,7 @@ internal sealed class TunnelClient : BackgroundService
             try
             {
                 await connection.StartAsync(stoppingToken);
-                await RegisterAsync(connection, "Register", stoppingToken);
+                await RegisterAsync(connection, force: true, stoppingToken);
                 logger.LogInformation("Tunnel connected to {Url} as '{Agent}'", config.Cloud.Url, config.Cloud.AgentName);
                 return;
             }
@@ -118,8 +128,8 @@ internal sealed class TunnelClient : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            using var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            wait.CancelAfter(RefreshInterval);
+            using var refresh = new CancellationTokenSource(RefreshInterval, timeProvider);
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, refresh.Token);
             try
             {
                 await changeSignals.Reader.ReadAsync(wait.Token);
@@ -132,7 +142,7 @@ internal sealed class TunnelClient : BackgroundService
             {
                 try
                 {
-                    await RegisterAsync(connection, "ToolsChanged", stoppingToken);
+                    await RegisterAsync(connection, force: false, stoppingToken);
                 }
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -142,35 +152,63 @@ internal sealed class TunnelClient : BackgroundService
         }
     }
 
-    private async Task RegisterAsync(HubConnection connection, string method, CancellationToken cancellationToken)
+    /// <param name="force">
+    /// True after (re)connecting: the cloud holds no catalog for a new connection. False for the refresh, which skips
+    /// the call when the cloud already accepted this exact catalog.
+    /// </param>
+    private async Task RegisterAsync(HubConnection connection, bool force, CancellationToken cancellationToken)
     {
         using (await registerLock.AcquireAsync(cancellationToken))
         {
             var servers = await manager.ListServersAsync(cancellationToken);
             var fingerprint = JsonSerializer.Serialize(servers);
-            if (method == "ToolsChanged" && fingerprint == registeredFingerprint)
+            if (!force && fingerprint == registeredFingerprint)
             {
                 return;
             }
 
             var catalog = new AgentCatalog(config.Cloud.AgentName, AgentVersion, ProtocolVersion.Current, servers);
-            var result = await connection.InvokeAsync<RegisterResult>("Register", catalog, cancellationToken);
-            registeredFingerprint = fingerprint;
-            if (!result.Accepted)
-            {
-                logger.LogError("The cloud rejected this agent: {Message}", result.Message);
-            }
+            var result = await connection.InvokeAsync<RegisterResult>(nameof(IAgentHubServer.Register), catalog, cancellationToken);
 
-            foreach (var rejected in result.RejectedServers)
-            {
-                logger.LogError("The cloud rejected server '{Server}': {Reason}", rejected.ServerName, rejected.Reason);
-            }
-
-            logger.LogInformation(
-                "Registered {Servers} server(s) with {Tools} tool(s)",
-                servers.Count,
-                servers.Sum(s => s.Tools.Count));
+            // Rejections can be temporary (a server name still held by this agent's previous, not yet timed out
+            // connection), so only a clean result stops the refresh from registering again.
+            var clean = result.Accepted && result.RejectedServers.Count == 0 && result.RejectedTools.Count == 0;
+            registeredFingerprint = clean ? fingerprint : null;
+            LogResult(result, servers);
         }
+    }
+
+    private void LogResult(RegisterResult result, IReadOnlyList<ServerCatalog> servers)
+    {
+        // The refresh retries every 30 s while something is rejected; log an unchanged result only at debug level.
+        var serialized = JsonSerializer.Serialize(result);
+        var repeated = serialized == lastResult;
+        lastResult = serialized;
+        var level = repeated ? LogLevel.Debug : LogLevel.Error;
+
+        if (!result.Accepted)
+        {
+            logger.Log(level, "The cloud rejected this agent: {Message}", result.Message);
+            return;
+        }
+
+        foreach (var rejected in result.RejectedServers)
+        {
+            logger.Log(level, "The cloud rejected server '{Server}': {Reason}", rejected.ServerName, rejected.Reason);
+        }
+
+        foreach (var rejected in result.RejectedTools)
+        {
+            logger.Log(level, "The cloud rejected tool '{Tool}' of server '{Server}': {Reason}", rejected.ToolName, rejected.ServerName, rejected.Reason);
+        }
+
+        var rejectedServers = result.RejectedServers.Select(r => r.ServerName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var registered = servers.Where(s => !rejectedServers.Contains(s.Name)).ToList();
+        logger.Log(
+            repeated ? LogLevel.Debug : LogLevel.Information,
+            "Registered {Servers} server(s) with {Tools} tool(s)",
+            registered.Count,
+            registered.Sum(s => s.Tools.Count) - result.RejectedTools.Count);
     }
 
     private static string AgentVersion => typeof(TunnelClient).Assembly.GetName().Version?.ToString() ?? "0.0.0";

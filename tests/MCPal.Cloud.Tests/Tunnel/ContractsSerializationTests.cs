@@ -27,12 +27,13 @@ internal sealed class ContractsSerializationTests
     [Test]
     public void RegisterResult_RoundTrip_PreservesRejections()
     {
-        var result = new RegisterResult(true, [new RejectedServer("kb", "name in use")], null);
+        var result = new RegisterResult(true, [new RejectedServer("kb", "name in use")], [new RejectedTool("wiki", "read", "invalid schema")], null);
 
         var copy = JsonSerializer.Deserialize<RegisterResult>(JsonSerializer.Serialize(result));
 
         copy.Should().NotBeNull();
         copy.RejectedServers.Should().ContainSingle().Which.Reason.Should().Be("name in use");
+        copy.RejectedTools.Should().ContainSingle().Which.Should().Be(new RejectedTool("wiki", "read", "invalid schema"));
     }
 
     [Test]

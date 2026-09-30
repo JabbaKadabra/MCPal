@@ -92,10 +92,11 @@ Configuration (environment variables use `__` for `:`):
 | `Mcpal__DataProtectionPath` | – | Directory for Data Protection keys (mount a volume) |
 | `Mcpal__ToolCallTimeoutSeconds` | 120 | Timeout of a relayed tool call |
 | `Mcpal__AccessTokenLifetimeMinutes` / `RefreshTokenLifetimeDays` | 60 / 30 | OAuth token lifetimes |
-| `Mcpal__McpRequestsPerMinute` | 600 | Rate limit per bearer token on `/mcp` |
+| `Mcpal__McpRequestsPerMinute` | 600 | Rate limit on `/mcp` per API key (OAuth tokens count against the key they were issued from, else their company); requests without a valid credential share a limit per client IP |
 | `Mcpal__MigrateOnStartup` | true | Apply EF Core migrations at startup |
+| `Mcpal__TrustedProxyNetworks__0`, `__1`, … | – | CIDR networks of reverse proxies whose `X-Forwarded-For`/`X-Forwarded-Proto` are trusted (loopback always is), e.g. `172.18.0.0/16` |
 
-Behind a TLS-terminating reverse proxy set `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` so rate limiting sees client addresses and cookies get the `Secure` flag; the proxy must allow WebSockets on `/hub/agent` and must not buffer `/mcp` responses (streamable HTTP).
+Behind a TLS-terminating reverse proxy set `Mcpal__TrustedProxyNetworks__0` to the proxy's network, so rate limits see client addresses and cookies get the `Secure` flag. Headers from other senders are ignored, so clients cannot spoof their address. The proxy must allow WebSockets on `/hub/agent` and must not buffer `/mcp` responses (streamable HTTP).
 
 ## Limits of the MVP
 

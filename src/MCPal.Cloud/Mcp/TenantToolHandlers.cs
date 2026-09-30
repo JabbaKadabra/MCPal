@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
 using ModelContextProtocol;
@@ -27,20 +26,6 @@ internal sealed class TenantToolHandlers(ConnectionRegistry registry, CallRelay 
 
     private ListToolsResult ListTools(Guid companyId)
     {
-        var tools = registry.Tools(companyId).Select(registered =>
-        {
-            var descriptor = registered.Tool;
-            return new Tool
-            {
-                Name = registered.PublicName,
-                Title = descriptor.Title,
-                Description = $"[{registered.ServerName}] {descriptor.Description}".TrimEnd(),
-                InputSchema = JsonSerializer.Deserialize<JsonElement>(descriptor.InputSchemaJson),
-                Annotations = descriptor.AnnotationsJson is null
-                    ? null
-                    : JsonSerializer.Deserialize<ToolAnnotations>(descriptor.AnnotationsJson, McpJsonUtilities.DefaultOptions),
-            };
-        });
-        return new ListToolsResult { Tools = [.. tools] };
+        return new ListToolsResult { Tools = [.. registry.Tools(companyId).Select(registered => registered.Listing)] };
     }
 }

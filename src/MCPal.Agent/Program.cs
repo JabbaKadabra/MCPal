@@ -6,17 +6,15 @@ using MCPal.Agent.Local;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-// Verbs: "run" (default) connects to the cloud; "check" validates the config, starts the local servers and prints their tools.
-var verb = args.FirstOrDefault(a => !a.StartsWith('-')) ?? "run";
-var hostArgs = args.Where(a => a != verb).ToArray();
-if (verb is not ("run" or "check"))
+var commandLine = AgentCommandLine.Parse(args);
+if (!commandLine.IsKnownVerb)
 {
-    Console.Error.WriteLine($"Unknown verb '{verb}'. Use 'run' or 'check' (options: --config <path>).");
+    Console.Error.WriteLine($"Unknown verb '{commandLine.Verb}'. Usage: MCPal.Agent [run|check] [--config <path>]");
     return 2;
 }
 
-var check = verb == "check";
-var builder = Host.CreateApplicationBuilder(hostArgs);
+var check = commandLine.Verb == AgentCommandLine.Check;
+var builder = Host.CreateApplicationBuilder(commandLine.HostArgs);
 builder.Services.AddWindowsService(options => options.ServiceName = "MCPal Agent");
 builder.Services.AddSystemd();
 builder.ConfigureContainer(new AutofacServiceProviderFactory(), container => container.RegisterModule(new AgentModule(runTunnel: !check)));

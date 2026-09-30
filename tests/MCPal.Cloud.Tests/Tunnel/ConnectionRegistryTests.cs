@@ -11,6 +11,12 @@ internal sealed class ConnectionRegistryTests
     private static AgentCatalog Catalog(string agent, params (string Server, string[] Tools)[] servers) =>
         new(agent, "1.0", ProtocolVersion.Current, [.. servers.Select(s => new ServerCatalog(s.Server, [.. s.Tools.Select(t => new ToolDescriptor(t, null, "d", "{\"type\":\"object\"}", null))]))]);
 
+    private static AgentCatalog CatalogOf(string agent, string server, params ToolDescriptor[] tools) =>
+        new(agent, "1.0", ProtocolVersion.Current, [new ServerCatalog(server, tools)]);
+
+    private static ToolDescriptor Tool(string name, string schema = "{\"type\":\"object\"}", string? annotations = null) =>
+        new(name, null, "d", schema, annotations);
+
     private static ConnectionRegistry NewRegistry() => new();
 
     [Test]
@@ -131,6 +137,89 @@ internal sealed class ConnectionRegistryTests
 
         result.RejectedServers.Should().ContainSingle().Which.ServerName.Should().Be("kb");
         registry.Tools(company).Select(t => t.PublicName).Should().Equal("kb__one");
+    }
+
+    [TestCase("not json")]
+    [TestCase("")]
+    [TestCase("[]")]
+    [TestCase("{\"type\":\"string\"}")]
+    public void Register_ToolWithInvalidInputSchema_RejectsOnlyThatTool(string schema)
+    {
+        var registry = NewRegistry();
+        var company = Guid.NewGuid();
+        registry.Add(company, "c1", Guid.NewGuid(), Now, () => { });
+
+        var result = registry.Register(company, "c1", CatalogOf("a", "kb", Tool("good"), Tool("bad", schema)));
+
+        result.RejectedServers.Should().BeEmpty();
+        var rejected = result.RejectedTools.Should().ContainSingle().Subject;
+        rejected.ServerName.Should().Be("kb");
+        rejected.ToolName.Should().Be("bad");
+        rejected.Reason.Should().Contain("input schema");
+        registry.Tools(company).Select(t => t.PublicName).Should().Equal("kb__good");
+        registry.Connections(company).Single().RejectedTools.Should().ContainSingle().Which.ToolName.Should().Be("bad");
+    }
+
+    [TestCase("not json")]
+    [TestCase("[]")]
+    [TestCase("{\"readOnlyHint\":\"yes\"}")]
+    public void Register_ToolWithInvalidAnnotations_RejectsOnlyThatTool(string annotations)
+    {
+        var registry = NewRegistry();
+        var company = Guid.NewGuid();
+        registry.Add(company, "c1", Guid.NewGuid(), Now, () => { });
+
+        var result = registry.Register(company, "c1", CatalogOf("a", "kb", Tool("good", annotations: "{\"readOnlyHint\":true}"), Tool("bad", annotations: annotations)));
+
+        result.RejectedTools.Should().ContainSingle().Which.Reason.Should().Contain("annotations");
+        var good = registry.Tools(company).Should().ContainSingle().Subject;
+        good.PublicName.Should().Be("kb__good");
+        good.Listing.Annotations.Should().NotBeNull();
+        good.Listing.Annotations?.ReadOnlyHint.Should().BeTrue();
+    }
+
+    [Test]
+    public void Register_ServerNameCollidingAfterSanitizingWithOtherConnection_RejectsItsToolsWithReason()
+    {
+        var registry = NewRegistry();
+        var company = Guid.NewGuid();
+        registry.Add(company, "c1", Guid.NewGuid(), Now, () => { });
+        registry.Add(company, "c2", Guid.NewGuid(), Now, () => { });
+        registry.Register(company, "c1", CatalogOf("a", "files.v2", Tool("read")));
+
+        var result = registry.Register(company, "c2", CatalogOf("b", "files_v2", Tool("read")));
+
+        var rejected = result.RejectedTools.Should().ContainSingle().Subject;
+        rejected.Should().BeEquivalentTo(new { ServerName = "files_v2", ToolName = "read" });
+        rejected.Reason.Should().Contain("files_v2__read").And.Contain("files.v2");
+        registry.TryResolve(company, "files_v2__read", out var tool).Should().BeTrue();
+        tool?.ConnectionId.Should().Be("c1");
+    }
+
+    [Test]
+    public void Register_PublicNamesCollidingAcrossSeparatorInOneCatalog_RejectsSecondTool()
+    {
+        var registry = NewRegistry();
+        var company = Guid.NewGuid();
+        registry.Add(company, "c1", Guid.NewGuid(), Now, () => { });
+        var catalog = new AgentCatalog("a", "1.0", ProtocolVersion.Current, [new ServerCatalog("a", [Tool("b__c")]), new ServerCatalog("a__b", [Tool("c")])]);
+
+        var result = registry.Register(company, "c1", catalog);
+
+        result.RejectedTools.Should().ContainSingle().Which.Should().BeEquivalentTo(new { ServerName = "a__b", ToolName = "c" });
+        registry.Tools(company).Should().ContainSingle().Which.ServerName.Should().Be("a");
+    }
+
+    [Test]
+    public void AllConnections_SeveralCompanies_ReturnsEveryConnectionWithItsCompany()
+    {
+        var registry = NewRegistry();
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        registry.Add(first, "c1", Guid.NewGuid(), Now, () => { });
+        registry.Add(second, "c2", Guid.NewGuid(), Now, () => { });
+
+        registry.AllConnections().Select(c => (c.CompanyId, c.ConnectionId)).Should().BeEquivalentTo([(first, "c1"), (second, "c2")]);
     }
 
     [Test]

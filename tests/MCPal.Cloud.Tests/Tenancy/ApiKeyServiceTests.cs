@@ -19,7 +19,22 @@ internal sealed class ApiKeyServiceTests : CloudTestBase
         var created = await scope.Resolve<IApiKeyService>().CreateAsync(company.Id, "hq", null, Ct);
 
         created.RawKey.Should().MatchRegex($"^mcpal_{company.Id.ToString("N")[..8]}_[A-Za-z0-9]{{40}}$");
-        created.Prefix.Should().Be(created.RawKey[..14]);
+        created.Prefix.Should().Be(created.RawKey[..21]);
+    }
+
+    [Test]
+    public async Task CreateAsync_TwoKeysOfSameCompany_ShowDistinctPrefixesWithSecretCharacters()
+    {
+        await using var scope = await GetServicesAsync();
+        var company = await scope.Resolve<ICompanyService>().CreateAsync("Acme", Ct);
+        var keys = scope.Resolve<IApiKeyService>();
+
+        var laptop = await keys.CreateAsync(company.Id, "laptop", null, Ct);
+        var server = await keys.CreateAsync(company.Id, "server", null, Ct);
+
+        var companyPart = $"mcpal_{company.Id.ToString("N")[..8]}_";
+        laptop.Prefix.Should().StartWith(companyPart).And.HaveLength(companyPart.Length + 6);
+        laptop.Prefix.Should().NotBe(server.Prefix);
     }
 
     [Test]

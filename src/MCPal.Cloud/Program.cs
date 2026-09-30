@@ -13,10 +13,11 @@ builder.Host.ConfigureContainer<ContainerBuilder>(container => container.Registe
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapHealthChecks("/health");

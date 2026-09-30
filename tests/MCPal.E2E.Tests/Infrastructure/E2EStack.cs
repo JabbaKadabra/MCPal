@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -61,7 +62,7 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
     }
 
     /// <summary>Starts a real agent (config, local server manager, tunnel client) that talks to this cloud.</summary>
-    public async Task<IHost> StartAgentAsync(SeededCompany company, string serverName, string agentName, CancellationToken cancellationToken)
+    public async Task<IHost> StartAgentAsync(SeededCompany company, string serverName, string agentName, CancellationToken cancellationToken, TimeProvider? timeProvider = null)
     {
         var config = new AgentConfig(
             new CloudConfig(Server.BaseAddress.ToString().TrimEnd('/'), company.RawKey, agentName),
@@ -81,10 +82,26 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
             container.RegisterModule(new AgentModule());
             container.RegisterInstance(config).AsSelf();
             container.RegisterInstance(new InMemoryTransport(this)).As<ITunnelTransportConfigurator>();
+            if (timeProvider is not null)
+            {
+                container.RegisterInstance(timeProvider).As<TimeProvider>();
+            }
         });
         var host = builder.Build();
         await host.StartAsync(cancellationToken);
         return host;
+    }
+
+    /// <summary>A bare tunnel connection with the given key, e.g. to hold a server name like a stale agent connection would.</summary>
+    public HubConnection CreateTunnelConnection(string apiKey)
+    {
+        return new HubConnectionBuilder()
+            .WithUrl(new Uri(Server.BaseAddress, "hub/agent"), options =>
+            {
+                new InMemoryTransport(this).Configure(options);
+                options.Headers["Authorization"] = "Bearer " + apiKey;
+            })
+            .Build();
     }
 
     public async Task<McpClient> ConnectClientAsync(string apiKey, CancellationToken cancellationToken)
