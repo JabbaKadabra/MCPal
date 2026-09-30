@@ -16,6 +16,9 @@ function renderPage() {
 
 const connection: Connection = {
   agentName: 'hq-01',
+  agentVersion: '1.0.0.0',
+  updateAvailable: false,
+  latestAgentVersion: null,
   connectedAt: '2026-01-01T10:00:00Z',
   apiKeyName: 'HQ agent',
   servers: [{ name: 'files_v2', tools: ['write'] }],
@@ -35,5 +38,22 @@ describe('ConnectionsPage', () => {
 
     expect(await screen.findByText(/kb — Server name is already registered/)).toBeInTheDocument();
     expect(screen.getByText(/files_v2 \/ read — Public tool name 'files_v2__read' is already used\./)).toBeInTheDocument();
+  });
+
+  it('shows the agent version', async () => {
+    mockFetch(() => ({ body: [connection] }));
+
+    renderPage();
+
+    expect(await screen.findByText(/agent 1\.0\.0\.0/)).toBeInTheDocument();
+    expect(screen.queryByText(/newer agent/)).not.toBeInTheDocument();
+  });
+
+  it('points out that a newer agent is available', async () => {
+    mockFetch(() => ({ body: [{ ...connection, updateAvailable: true, latestAgentVersion: '1.2.0' }] }));
+
+    renderPage();
+
+    expect(await screen.findByText(/A newer agent \(1\.2\.0\) is available/)).toBeInTheDocument();
   });
 });

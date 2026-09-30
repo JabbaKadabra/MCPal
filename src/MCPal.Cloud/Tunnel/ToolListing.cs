@@ -30,6 +30,18 @@ internal static class ToolListing
             return false;
         }
 
+        JsonElement? outputSchema = null;
+        if (descriptor.OutputSchemaJson is not null)
+        {
+            if (!TryParse(descriptor.OutputSchemaJson, out JsonElement parsed))
+            {
+                error = "The output schema is not valid JSON.";
+                return false;
+            }
+
+            outputSchema = parsed;
+        }
+
         ToolAnnotations? annotations = null;
         if (descriptor.AnnotationsJson is not null && !TryParse(descriptor.AnnotationsJson, out annotations))
         {
@@ -51,6 +63,17 @@ internal static class ToolListing
         catch (ArgumentException ex)
         {
             error = $"The input schema is not a valid MCP tool input schema: {ex.Message}";
+            return false;
+        }
+
+        try
+        {
+            tool.OutputSchema = outputSchema;
+        }
+        catch (ArgumentException ex)
+        {
+            tool = null;
+            error = $"The output schema is not a valid JSON Schema: {ex.Message}";
             return false;
         }
 

@@ -3,13 +3,13 @@ using Microsoft.Extensions.Hosting;
 namespace MCPal.Cloud.OAuth;
 
 /// <summary>Removes expired authorization codes and tokens once a day.</summary>
-internal sealed class OAuthCleanupService(IServiceScopeFactory scopes, ILogger<OAuthCleanupService> logger) : BackgroundService
+internal sealed class OAuthCleanupService(IServiceScopeFactory scopes, TimeProvider timeProvider, ILogger<OAuthCleanupService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromDays(1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval);
+        using var timer = new PeriodicTimer(Interval, timeProvider);
         do
         {
             try

@@ -8,11 +8,11 @@
     "kb": {
       "command": "npx",
       "args": ["-y", "@acme/kb-mcp"],
-      "env": { "KB_TOKEN": "..." }
+      "env": { "KB_TOKEN": "${KB_TOKEN}" }
     },
     "wiki": {
       "url": "http://intranet:8080/mcp",
-      "headers": { "Authorization": "Bearer ..." }
+      "headers": { "Authorization": "Bearer ${WIKI_TOKEN}" }
     }
   }
 }

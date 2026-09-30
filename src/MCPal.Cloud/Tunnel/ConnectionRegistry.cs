@@ -6,7 +6,8 @@ using ModelContextProtocol.Protocol;
 namespace MCPal.Cloud.Tunnel;
 
 /// <param name="Listing">The MCP tool as <c>tools/list</c> returns it, built and validated at registration.</param>
-internal sealed record RegisteredTool(string PublicName, string ServerName, ToolDescriptor Descriptor, Tool Listing, string ConnectionId);
+/// <param name="AgentProtocolVersion">Protocol version the owning agent announced in <c>Register</c>.</param>
+internal sealed record RegisteredTool(string PublicName, string ServerName, ToolDescriptor Descriptor, Tool Listing, string ConnectionId, string AgentProtocolVersion, string AgentName);
 
 internal sealed record RegisteredServer(string Name, IReadOnlyList<RegisteredTool> Tools);
 
@@ -17,6 +18,7 @@ internal sealed record ConnectionInfo(
     DateTimeOffset ConnectedAt,
     Action Abort,
     string AgentName,
+    string AgentVersion,
     IReadOnlyList<RegisteredServer> Servers,
     IReadOnlyList<RejectedServer> RejectedServers,
     IReadOnlyList<RejectedTool> RejectedTools);
@@ -35,7 +37,7 @@ internal sealed class ConnectionRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
         ArgumentNullException.ThrowIfNull(abort);
 
-        var info = new ConnectionInfo(companyId, connectionId, apiKeyId, connectedAt, abort, string.Empty, [], [], []);
+        var info = new ConnectionInfo(companyId, connectionId, apiKeyId, connectedAt, abort, string.Empty, string.Empty, [], [], []);
         Update(current => (WithConnection(current, companyId, info), true));
     }
 
@@ -97,13 +99,13 @@ internal sealed class ConnectionRegistry
                     }
 
                     publicNameOwners.Add(publicName, (server.Name, tool.Name));
-                    tools.Add(new RegisteredTool(publicName, server.Name, tool, listing, connectionId));
+                    tools.Add(new RegisteredTool(publicName, server.Name, tool, listing, connectionId, catalog.ProtocolVersion, catalog.AgentName));
                 }
 
                 accepted.Add(new RegisteredServer(server.Name, tools));
             }
 
-            var updated = existing with { AgentName = catalog.AgentName, Servers = accepted, RejectedServers = rejectedServers, RejectedTools = rejectedTools };
+            var updated = existing with { AgentName = catalog.AgentName, AgentVersion = catalog.AgentVersion, Servers = accepted, RejectedServers = rejectedServers, RejectedTools = rejectedTools };
             return (WithConnection(current, companyId, updated), new RegisterResult(true, rejectedServers, rejectedTools, null));
         });
     }

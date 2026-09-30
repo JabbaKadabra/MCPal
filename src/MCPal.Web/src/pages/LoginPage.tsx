@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { ErrorText } from '../components/ErrorText';
 import { meQueryKey } from '../components/useMe';
 import { t } from '../i18n';
@@ -18,6 +18,9 @@ export function LoginPage() {
       await navigate('/keys');
     },
   });
+
+  const resend = useMutation({ mutationFn: () => api.resendConfirmation(email) });
+  const notConfirmed = login.error instanceof ApiError && login.error.code === 'email_not_confirmed';
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -43,10 +46,21 @@ export function LoginPage() {
           />
         </label>
         <ErrorText error={login.error} />
+        {notConfirmed && (
+          <>
+            <button type="button" className="ghost" disabled={resend.isPending} onClick={() => resend.mutate()}>
+              {t('auth.login.resend')}
+            </button>
+            {resend.isSuccess && <p role="status">{t('auth.login.resent')}</p>}
+          </>
+        )}
         <button type="submit" disabled={login.isPending}>
           {t('auth.login.submit')}
         </button>
       </form>
+      <p className="muted">
+        <Link to="/forgot-password">{t('auth.login.forgot')}</Link>
+      </p>
       <p className="muted">
         {t('auth.login.noAccount')} <Link to="/signup">{t('auth.signup.submit')}</Link>
       </p>

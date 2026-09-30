@@ -1,4 +1,5 @@
 using Autofac;
+using MCPal.Cloud.Portal;
 using MCPal.Cloud.Tenancy;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
@@ -28,6 +29,9 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
         this.configureContainer = configureContainer;
         this.settings = settings ?? [];
     }
+
+    /// <summary>Every mail the portal tries to send lands here instead of an SMTP server.</summary>
+    public CapturingEmailSender Emails { get; } = new();
 
     public static async Task<CloudWebApplicationFactory> CreateAsync(
         CancellationToken cancellationToken,
@@ -105,6 +109,8 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
             {
                 container.RegisterInstance(timeProvider).As<TimeProvider>();
             }
+
+            container.RegisterInstance<IEmailSender>(Emails);
 
             configureContainer?.Invoke(container);
         });

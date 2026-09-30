@@ -1,0 +1,33 @@
+[Unit]
+Description=MCPal agent (outbound tunnel to the MCPal cloud)
+Documentation=https://github.com/JabbaKadabra/MCPal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The agent uses UseSystemd(): it tells systemd when it is ready.
+Type=notify
+User=mcpal
+Group=mcpal
+WorkingDirectory=/etc/mcpal
+# MCPAL_API_KEY and the secrets that mcpal.json refers to as ${VAR}. Mode 600, not readable by the agent user.
+EnvironmentFile=-/etc/mcpal/agent.env
+ExecStart=/opt/mcpal/mcpal-agent run --config /etc/mcpal/mcpal.json
+Restart=always
+RestartSec=5
+
+# /var/lib/mcpal is created for the service; it is also the home directory (npx and similar tools cache there).
+StateDirectory=mcpal
+Environment=HOME=/var/lib/mcpal
+
+# Hardening. Local stdio servers run as children of the agent and inherit these limits: if one needs to write outside
+# /var/lib/mcpal or to read a home directory, add the path to ReadWritePaths= / ReadOnlyPaths= in a drop-in
+# (systemctl edit mcpal-agent) or, as a last resort, set ProtectSystem=full and ProtectHome=read-only there.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/mcpal
+
+[Install]
+WantedBy=multi-user.target

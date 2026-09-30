@@ -118,4 +118,143 @@ internal sealed class AgentConfigLoaderTests
 
         act.Should().Throw<AgentConfigException>().WithMessage($"*{path}*");
     }
+
+    private const string WithVariables = """
+        {
+          "cloud": { "url": "${CLOUD_URL}", "apiKey": "${CLOUD_KEY}" },
+          "mcpServers": {
+            "db":   { "command": "${DB_BIN}", "args": ["--dsn", "${DB_DSN}"], "env": { "PGPASSWORD": "${DB_PASSWORD}" } },
+            "jira": { "url": "https://${JIRA_HOST}/mcp", "headers": { "Authorization": "Bearer ${JIRA_TOKEN}" } }
+          }
+        }
+        """;
+
+    private static Dictionary<string, string?> AllVariables() => new()
+    {
+        ["CLOUD_URL"] = "https://mcpal.example.com",
+        ["CLOUD_KEY"] = "mcpal_cccccccc_key",
+        ["DB_BIN"] = "/usr/bin/pg-mcp",
+        ["DB_DSN"] = "host=db",
+        ["DB_PASSWORD"] = "pw",
+        ["JIRA_HOST"] = "jira.internal",
+        ["JIRA_TOKEN"] = "tok",
+    };
+
+    [Test]
+    public void Parse_VariablesInEveryField_AreExpanded()
+    {
+        var config = AgentConfigLoader.Parse(WithVariables, AllVariables(), requireCloud: true);
+
+        config.Cloud.Url.Should().Be("https://mcpal.example.com");
+        config.Cloud.ApiKey.Should().Be("mcpal_cccccccc_key");
+        config.McpServers["db"].Command.Should().Be("/usr/bin/pg-mcp");
+        config.McpServers["db"].Args.Should().Equal("--dsn", "host=db");
+        config.McpServers["db"].Env["PGPASSWORD"].Should().Be("pw");
+        config.McpServers["jira"].Url.Should().Be("https://jira.internal/mcp");
+        config.McpServers["jira"].Headers["Authorization"].Should().Be("Bearer tok");
+    }
+
+    [Test]
+    public void Parse_UnsetVariableInServer_ThrowsWithServerAndVariableName()
+    {
+        var environment = AllVariables();
+        environment.Remove("JIRA_TOKEN");
+
+        var act = () => AgentConfigLoader.Parse(WithVariables, environment, requireCloud: true);
+
+        act.Should().Throw<AgentConfigException>().WithMessage("Server 'jira': environment variable 'JIRA_TOKEN' is not set.");
+    }
+
+    [Test]
+    public void Parse_UnsetVariableInCloudKey_Throws()
+    {
+        var environment = AllVariables();
+        environment.Remove("CLOUD_KEY");
+
+        var act = () => AgentConfigLoader.Parse(WithVariables, environment, requireCloud: true);
+
+        act.Should().Throw<AgentConfigException>().WithMessage("*'CLOUD_KEY' is not set*");
+    }
+
+    [Test]
+    public void Parse_ApiKeyFromEnvironmentOverride_DoesNotNeedVariableOfConfiguredKey()
+    {
+        var environment = AllVariables();
+        environment.Remove("CLOUD_KEY");
+        environment["MCPAL_API_KEY"] = "mcpal_dddddddd_override";
+
+        var config = AgentConfigLoader.Parse(WithVariables, environment, requireCloud: true);
+
+        config.Cloud.ApiKey.Should().Be("mcpal_dddddddd_override");
+    }
+
+    [Test]
+    public void Parse_CloudNotRequired_DoesNotFailOnUnsetCloudVariables()
+    {
+        var environment = AllVariables();
+        environment.Remove("CLOUD_URL");
+        environment.Remove("CLOUD_KEY");
+
+        var config = AgentConfigLoader.Parse(WithVariables, environment, requireCloud: false);
+
+        config.McpServers.Should().ContainKey("db");
+    }
+
+    [Test]
+    public void Parse_DefaultInConfig_IsUsedWhenVariableUnset()
+    {
+        const string json = """{ "mcpServers": { "a": { "command": "run", "args": ["${MODE:-fast}"] } } }""";
+
+        var config = AgentConfigLoader.Parse(json, NoEnvironment, requireCloud: false);
+
+        config.McpServers["a"].Args.Should().Equal("fast");
+    }
+
+    [Test]
+    public void Parse_IncludeAndExcludeTools_AreRead()
+    {
+        const string json = """{ "mcpServers": { "pg": { "command": "x", "includeTools": ["query", "list_*"], "excludeTools": ["drop_*"] } } }""";
+
+        var server = AgentConfigLoader.Parse(json, NoEnvironment, requireCloud: false).McpServers["pg"];
+
+        server.IncludeTools.Should().Equal("query", "list_*");
+        server.ExcludeTools.Should().Equal("drop_*");
+    }
+
+    [Test]
+    public void Parse_NoToolLists_GivesEmptyLists()
+    {
+        const string json = """{ "mcpServers": { "pg": { "command": "x" } } }""";
+
+        var server = AgentConfigLoader.Parse(json, NoEnvironment, requireCloud: false).McpServers["pg"];
+
+        server.IncludeTools.Should().BeEmpty();
+        server.ExcludeTools.Should().BeEmpty();
+    }
+
+    [TestCase("""{ "mcpServers": { "pg": { "command": "x", "includeTools": [""] } } }""")]
+    [TestCase("""{ "mcpServers": { "pg": { "command": "x", "excludeTools": ["  "] } } }""")]
+    public void Parse_EmptyPattern_ThrowsNamingTheServer(string json)
+    {
+        var act = () => AgentConfigLoader.Parse(json, NoEnvironment, requireCloud: false);
+
+        act.Should().Throw<AgentConfigException>().WithMessage("Server 'pg'*");
+    }
+
+    [Test]
+    public void Parse_StatusFile_IsReadAndExpanded()
+    {
+        var environment = new Dictionary<string, string?> { ["STATE_DIR"] = "/var/lib/mcpal" };
+        const string json = """{ "statusFile": "${STATE_DIR}/status.json", "mcpServers": {} }""";
+
+        var config = AgentConfigLoader.Parse(json, environment, requireCloud: false);
+
+        config.StatusFile.Should().Be("/var/lib/mcpal/status.json");
+    }
+
+    [Test]
+    public void Parse_NoStatusFile_IsNull()
+    {
+        AgentConfigLoader.Parse("""{ "mcpServers": {} }""", NoEnvironment, requireCloud: false).StatusFile.Should().BeNull();
+    }
 }

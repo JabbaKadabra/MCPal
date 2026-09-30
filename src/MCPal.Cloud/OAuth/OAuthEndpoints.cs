@@ -225,6 +225,11 @@ internal static class OAuthEndpoints
                 return Error(401, "invalid_key", "The API key is missing, invalid, expired or revoked.");
             }
 
+            if (key.Purpose == ApiKeyPurpose.Agent)
+            {
+                return Error(403, "key_not_allowed", "This key can only be used by an agent.");
+            }
+
             companyId = key.CompanyId;
             apiKeyId = key.ApiKeyId;
         }

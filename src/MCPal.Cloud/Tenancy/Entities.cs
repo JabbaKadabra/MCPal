@@ -15,6 +15,19 @@ internal sealed class Company
     public bool Disabled { get; set; }
 }
 
+/// <summary>What a key may be used for. Existing keys are <see cref="Any"/>.</summary>
+internal enum ApiKeyPurpose
+{
+    /// <summary>Opens tunnels and works as bearer token / OAuth login.</summary>
+    Any = 0,
+
+    /// <summary>Only opens agent tunnels. Refused on <c>/mcp</c> and at the OAuth authorize page.</summary>
+    Agent = 1,
+
+    /// <summary>Only for Claude: bearer token or OAuth login. Refused on tunnels.</summary>
+    Client = 2,
+}
+
 internal sealed class ApiKey
 {
     public Guid Id { get; set; }
@@ -36,9 +49,27 @@ internal sealed class ApiKey
     public bool Disabled { get; set; }
 
     public DateTimeOffset? LastUsedAt { get; set; }
+
+    public ApiKeyPurpose Purpose { get; set; }
+
+    /// <summary>Server names this key may use on <c>/mcp</c>. Empty means all servers. Only for <see cref="ApiKeyPurpose.Client"/> and <see cref="ApiKeyPurpose.Any"/>.</summary>
+    public string[] AllowedServers { get; set; } = [];
+
+    /// <summary>The portal user who created the key. Null for keys created before users had roles.</summary>
+    public string? CreatedByUserId { get; set; }
+}
+
+/// <summary>Owners manage users and every key; members see connections, the audit log and connect info, and create Claude keys for themselves.</summary>
+internal enum PortalRole
+{
+    Member = 0,
+    Owner = 1,
 }
 
 internal sealed class PortalUser : IdentityUser
 {
     public Guid CompanyId { get; set; }
+
+    /// <summary>Stored as text. Every code path that creates a user sets it; the default is the least privileged role.</summary>
+    public PortalRole Role { get; set; } = PortalRole.Member;
 }

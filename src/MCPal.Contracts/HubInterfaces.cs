@@ -4,6 +4,12 @@ namespace MCPal.Contracts;
 public interface IAgentHubClient
 {
     Task<CallToolResponse> CallTool(CallToolRequest request);
+
+    /// <summary>
+    /// Fire and forget, best effort (protocol 1.1): the cloud stopped waiting for the call with this request id.
+    /// Unknown ids are ignored, the call may just have finished.
+    /// </summary>
+    Task CancelCall(string requestId);
 }
 
 /// <summary>Agent to cloud hub methods.</summary>

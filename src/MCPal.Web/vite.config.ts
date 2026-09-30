@@ -26,5 +26,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     globals: false,
+    // Playwright specs run against a live stack (npm run e2e), not in jsdom.
+    exclude: ['e2e/**', 'node_modules/**'],
   },
 });

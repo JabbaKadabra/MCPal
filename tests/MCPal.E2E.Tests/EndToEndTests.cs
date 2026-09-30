@@ -3,6 +3,7 @@ using MCPal.Cloud.Tunnel;
 using MCPal.Contracts;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol.Protocol;
 
@@ -35,6 +36,29 @@ internal sealed class EndToEndTests
     }
 
     [Test]
+    public async Task ListAndCall_ToolWithOutputSchema_SeesSameSchemaAndStructuredContentAsLocalServer()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct);
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await E2EStack.WaitForToolAsync(client, "test__weather", Ct);
+        await using var local = await E2EStack.ConnectLocalServerAsync(Ct);
+
+        var tools = await client.ListToolsAsync(cancellationToken: Ct);
+        var localTools = await local.ListToolsAsync(cancellationToken: Ct);
+        var viaCloud = await client.CallToolAsync("test__weather", new Dictionary<string, object?> { ["city"] = "Linz" }, cancellationToken: Ct);
+        var direct = await local.CallToolAsync("weather", new Dictionary<string, object?> { ["city"] = "Linz" }, cancellationToken: Ct);
+
+        var cloudSchema = tools.Single(t => t.Name == "test__weather").ProtocolTool.OutputSchema;
+        var localSchema = localTools.Single(t => t.Name == "weather").ProtocolTool.OutputSchema;
+        cloudSchema.Should().NotBeNull();
+        cloudSchema?.GetRawText().Should().Be(localSchema?.GetRawText());
+        viaCloud.StructuredContent?.GetRawText().Should().Be(direct.StructuredContent?.GetRawText());
+        viaCloud.StructuredContent?.GetProperty("city").GetString().Should().Be("Linz");
+    }
+
+    [Test]
     public async Task CallTool_LocalToolThrows_ReturnsIsError()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
@@ -61,6 +85,106 @@ internal sealed class EndToEndTests
 
         result.IsError.Should().BeTrue();
         TextOf(result).Should().Contain("timed out");
+    }
+
+    [Test]
+    public async Task CallTool_CloudTimesOut_LocalToolIsCancelledLongBeforeItsOwnEnd()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct, new() { ["Mcpal:ToolCallTimeoutSeconds"] = "2" });
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
+        var clock = Stopwatch.StartNew();
+
+        var result = await client.CallToolAsync("test__slow", new Dictionary<string, object?> { ["milliseconds"] = 30000 }, cancellationToken: Ct);
+        var cancellations = await WaitForCancellationsAsync(client);
+
+        TextOf(result).Should().Contain("timed out after 2 s");
+        cancellations.Should().Be(1);
+        clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(15));
+    }
+
+    /// <summary>Polls the test server until it saw a cancelled call.</summary>
+    private static async Task<int> WaitForCancellationsAsync(ModelContextProtocol.Client.McpClient client)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            var count = int.Parse(TextOf(await client.CallToolAsync("test__cancellations", cancellationToken: timeout.Token)), System.Globalization.CultureInfo.InvariantCulture);
+            if (count > 0)
+            {
+                return count;
+            }
+
+            await Task.Delay(100, timeout.Token);
+        }
+    }
+
+    [Test]
+    public async Task StatusFile_AgentConnectsAndStops_ShowsServersThenDisconnected()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct);
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        var statusFile = Path.Combine(Path.GetTempPath(), "mcpal-e2e-" + Guid.NewGuid().ToString("N"), "status.json");
+        var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, statusFile: statusFile);
+        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
+
+        var running = await WaitForStatusAsync(statusFile, status => status.LastRegisteredAt is not null);
+        await agent.StopAsync(Ct);
+        agent.Dispose();
+        var stopped = MCPal.Agent.Status.AgentStatusFile.Read(statusFile);
+
+        running.Tunnel.Should().Be("connected");
+        running.Servers.Should().ContainSingle().Which.State.Should().Be("running");
+        running.Servers[0].Tools.Should().BeGreaterThanOrEqualTo(4);
+        stopped.Tunnel.Should().Be("disconnected");
+    }
+
+    private static async Task<MCPal.Agent.Status.AgentStatus> WaitForStatusAsync(string path, Func<MCPal.Agent.Status.AgentStatus, bool> condition)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        while (true)
+        {
+            if (File.Exists(path) && MCPal.Agent.Status.AgentStatusFile.Read(path) is { } status && condition(status))
+            {
+                return status;
+            }
+
+            await Task.Delay(100, timeout.Token);
+        }
+    }
+
+    [Test]
+    public async Task Agent_ProtocolRejectedByCloud_LogsClearMessageAndBacksOffLongBeforeTryingAgain()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct);
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var logs = new CapturingLoggerProvider();
+
+        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, timeProvider: time, protocolVersion: "9.0", logs: logs);
+        var first = await logs.WaitForAsync(entry => entry.Message.Contains("too old or too new", StringComparison.Ordinal), 1, Ct);
+        time.Advance(TimeSpan.FromMinutes(5));
+        await Task.Delay(500, Ct);
+        var afterFiveMinutes = logs.Entries.Count(entry => entry.Message.Contains("too old or too new", StringComparison.Ordinal));
+
+        // The 15 minute wait starts when the supervise loop begins, which can be just after the first log line.
+        // Advancing past it once or twice always wakes the loop; the wait below then sees the second attempt.
+        for (var i = 0; i < 3 && logs.Entries.Count(entry => entry.Message.Contains("too old or too new", StringComparison.Ordinal)) < 2; i++)
+        {
+            time.Advance(TimeSpan.FromMinutes(16));
+            await Task.Delay(300, Ct);
+        }
+        var second = await logs.WaitForAsync(entry => entry.Message.Contains("too old or too new", StringComparison.Ordinal), 2, Ct);
+
+        first[0].Level.Should().Be(LogLevel.Error);
+        first[0].Message.Should().Contain("protocol 9.0").And.Contain(stack.Server.BaseAddress.ToString().TrimEnd('/')).And.Contain("Download");
+        afterFiveMinutes.Should().Be(1, "an incompatible agent must not register every 30 seconds");
+        second[1].Level.Should().Be(LogLevel.Debug, "repeats of the same rejection stay quiet");
     }
 
     [Test]

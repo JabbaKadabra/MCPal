@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using MCPal.Cloud.Diagnostics;
 using MCPal.Cloud.Mcp;
 using MCPal.Cloud.Portal;
 using MCPal.Cloud.Storage;
@@ -12,7 +13,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 namespace MCPal.Cloud;
 
@@ -21,9 +26,52 @@ internal static class CloudWebServices
 {
     public const string McpRateLimitPolicy = "mcp";
 
+    /// <summary>Health checks with this tag decide readiness; liveness runs none.</summary>
+    public const string ReadyHealthTag = "ready";
+
+    /// <summary>Npgsql 9+ emits its own spans (<c>ActivitySource</c>) and metrics (<c>Meter</c>) under this name; no extra package is needed.</summary>
+    private const string NpgsqlTelemetryName = "Npgsql";
+
+    /// <summary>
+    /// Traces and metrics. The OTLP exporter is on only when the standard <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> variable is set
+    /// (its other <c>OTEL_*</c> variables are read by the exporter itself), so a deployment without a collector exports nothing.
+    /// </summary>
+    private static void RegisterTelemetry(IServiceCollection services)
+    {
+        var export = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT"));
+        var telemetry = services.AddOpenTelemetry().ConfigureResource(resource => resource.AddService("mcpal-cloud"));
+
+        // This collection is populated into the container after the host's services. OpenTelemetry adds a fallback
+        // IConfiguration (environment variables only) when none is registered, which would replace the host's.
+        services.RemoveAll<Microsoft.Extensions.Configuration.IConfiguration>();
+        telemetry.WithTracing(tracing =>
+        {
+            tracing.AddSource(CloudTelemetry.ActivitySourceName)
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddSource(NpgsqlTelemetryName);
+            if (export)
+            {
+                tracing.AddOtlpExporter();
+            }
+        });
+        telemetry.WithMetrics(metrics =>
+        {
+            metrics.AddMeter(CloudTelemetry.MeterName)
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddMeter(NpgsqlTelemetryName);
+            if (export)
+            {
+                metrics.AddOtlpExporter();
+            }
+        });
+    }
+
     public static void Register(IServiceCollection services)
     {
-        services.AddHealthChecks();
+        RegisterTelemetry(services);
+        services.AddHealthChecks().AddDbContextCheck<MCPalDbContext>(tags: [ReadyHealthTag]);
 
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, McpBearerAuthenticationHandler>(McpBearerDefaults.Scheme, null)
@@ -34,17 +82,24 @@ internal static class CloudWebServices
         // AddIdentity sets the cookie as default authenticate scheme.
         services.PostConfigure<AuthenticationOptions>(options => options.DefaultAuthenticateScheme = McpBearerDefaults.SelectorScheme);
         services.AddAuthorizationBuilder()
+            // Keys for agents only are refused here; tokens from a portal session have no key and no purpose.
             .AddPolicy(McpBearerDefaults.McpPolicy, policy => policy
                 .AddAuthenticationSchemes(McpBearerDefaults.Scheme)
-                .RequireAuthenticatedUser())
+                .RequireAuthenticatedUser()
+                .RequireAssertion(context => context.User.GetKeyPurpose() is null or ApiKeyPurpose.Any or ApiKeyPurpose.Client))
             .AddPolicy(McpBearerDefaults.TunnelPolicy, policy => policy
                 .AddAuthenticationSchemes(McpBearerDefaults.Scheme)
                 .RequireAuthenticatedUser()
-                .RequireClaim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey));
+                .RequireClaim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey)
+                .RequireAssertion(context => context.User.GetKeyPurpose() is ApiKeyPurpose.Any or ApiKeyPurpose.Agent));
 
         services.AddIdentity<PortalUser, IdentityRole>(options =>
             {
                 options.User.RequireUniqueEmail = true;
+
+                // New accounts must confirm their address before a password login works. A migration confirms the
+                // accounts that existed before, so nobody is locked out.
+                options.SignIn.RequireConfirmedEmail = true;
                 options.Password.RequiredLength = 10;
                 options.Password.RequireNonAlphanumeric = false;
                 options.Password.RequireUppercase = false;
@@ -52,7 +107,8 @@ internal static class CloudWebServices
                 options.Password.RequireDigit = false;
                 options.Lockout.MaxFailedAccessAttempts = 8;
             })
-            .AddEntityFrameworkStores<MCPalDbContext>();
+            .AddEntityFrameworkStores<MCPalDbContext>()
+            .AddDefaultTokenProviders();
         services.ConfigureApplicationCookie(options =>
         {
             options.Cookie.Name = "mcpal.portal";
@@ -115,9 +171,9 @@ internal static class CloudWebServices
             options.Stateless = true;
             options.ConfigureSessionOptions = (context, serverOptions, _) =>
             {
-                var companyId = context.User.GetCompanyId()
+                var caller = context.User.GetCallerIdentity()
                     ?? throw new InvalidOperationException("MCP request without an authenticated company.");
-                context.RequestServices.GetRequiredService<TenantToolHandlers>().Configure(serverOptions, companyId);
+                context.RequestServices.GetRequiredService<TenantToolHandlers>().Configure(serverOptions, caller, context.RequestAborted);
                 return Task.CompletedTask;
             };
         });
@@ -125,6 +181,12 @@ internal static class CloudWebServices
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = (context, _) =>
+            {
+                var policy = context.HttpContext.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName ?? "unknown";
+                context.HttpContext.RequestServices.GetRequiredService<CloudTelemetry>().RecordRateLimitRejection(policy);
+                return ValueTask.CompletedTask;
+            };
             options.AddPolicy(PortalEndpoints.RateLimitPolicy, context => RateLimitPartition.GetFixedWindowLimiter(
                 "ip:" + context.Connection.RemoteIpAddress,
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));

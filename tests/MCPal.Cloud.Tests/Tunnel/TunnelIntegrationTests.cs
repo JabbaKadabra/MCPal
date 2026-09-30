@@ -84,6 +84,7 @@ internal sealed class TunnelIntegrationTests
         var result = await connection.InvokeAsync<RegisterResult>("Register", Catalog(protocol: "99.0"), Ct);
 
         result.Accepted.Should().BeFalse();
+        result.Code.Should().Be("unsupported_protocol");
         result.Message.Should().Contain("99.0");
         factory.Services.GetRequiredService<ConnectionRegistry>().Tools(acme.CompanyId).Should().BeEmpty();
     }
@@ -170,8 +171,8 @@ internal sealed class TunnelIntegrationTests
     /// <summary>Authenticates the key, then reports it inactive: the state after a revoke that lands during the handshake.</summary>
     private sealed class KeyRevokedAfterAuthentication(IApiKeyService inner) : IApiKeyService
     {
-        public Task<CreatedApiKey> CreateAsync(Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken) =>
-            inner.CreateAsync(companyId, name, expiresAt, cancellationToken);
+        public Task<CreatedApiKey> CreateAsync(Guid companyId, NewApiKey request, CancellationToken cancellationToken) =>
+            inner.CreateAsync(companyId, request, cancellationToken);
 
         public Task<ValidatedKey?> ValidateAsync(string rawKey, CancellationToken cancellationToken) => inner.ValidateAsync(rawKey, cancellationToken);
 

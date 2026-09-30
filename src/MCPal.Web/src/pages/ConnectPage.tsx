@@ -30,6 +30,7 @@ export function ConnectPage() {
             </li>
             <li>{t('connect.step3')}</li>
           </ol>
+          <p className="muted">{t('connect.keys')}</p>
           <h2>{t('connect.header.title')}</h2>
           <p>{t('connect.header.body')}</p>
           <h2>{t('connect.code.title')}</h2>

@@ -14,9 +14,15 @@ internal sealed class LocalServer(string name, LocalServerConfig config, ILogger
 {
     private readonly AsyncLock startLock = new();
     private readonly ILogger logger = loggerFactory.CreateLogger($"LocalServer.{name}");
+    private readonly ToolFilter filter = new(config.IncludeTools, config.ExcludeTools);
     private McpClient? client;
 
     public string Name => name;
+
+    /// <summary>Names of tools the last listing hid because of <c>includeTools</c> / <c>excludeTools</c>.</summary>
+    public IReadOnlyList<string> HiddenTools { get; private set; } = [];
+
+    public bool IsExposed(string toolName) => filter.IsExposed(toolName);
 
     public async Task<McpClient> GetClientAsync(CancellationToken cancellationToken)
     {
@@ -49,7 +55,8 @@ internal sealed class LocalServer(string name, LocalServerConfig config, ILogger
     {
         var mcp = await GetClientAsync(cancellationToken);
         var tools = await mcp.ListToolsAsync(cancellationToken: cancellationToken);
-        return new ServerCatalog(name, [.. tools.Select(ToDescriptor)]);
+        HiddenTools = [.. tools.Where(tool => !filter.IsExposed(tool.Name)).Select(tool => tool.Name)];
+        return new ServerCatalog(name, [.. tools.Where(tool => filter.IsExposed(tool.Name)).Select(ToDescriptor)]);
     }
 
     /// <summary>Drops the client so the next use starts a fresh one.</summary>
@@ -72,7 +79,8 @@ internal sealed class LocalServer(string name, LocalServerConfig config, ILogger
         tool.ProtocolTool.Title,
         tool.Description,
         tool.JsonSchema.GetRawText(),
-        tool.ProtocolTool.Annotations is { } annotations ? JsonSerializer.Serialize(annotations, McpJsonUtilities.DefaultOptions) : null);
+        tool.ProtocolTool.Annotations is { } annotations ? JsonSerializer.Serialize(annotations, McpJsonUtilities.DefaultOptions) : null,
+        tool.ProtocolTool.OutputSchema is { } outputSchema ? outputSchema.GetRawText() : null);
 
     private IClientTransport CreateTransport()
     {

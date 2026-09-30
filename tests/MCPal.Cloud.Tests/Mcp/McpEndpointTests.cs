@@ -97,6 +97,69 @@ internal sealed class McpEndpointTests
     }
 
     [Test]
+    public async Task CallTool_AgentReturnsStructuredContentAndMeta_ArrivesInMcpResult()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var response = new CallToolResponse(false, "[{\"type\":\"text\",\"text\":\"21.5\"}]", null, "{\"temp\":21.5}", "{\"source\":\"station-7\"}");
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("wx__weather", cancellationToken: Ct);
+
+        result.StructuredContent?.GetProperty("temp").GetDouble().Should().Be(21.5);
+        result.Meta?["source"]?.GetValue<string>().Should().Be("station-7");
+    }
+
+    [Test]
+    public async Task CallTool_AgentReturnsInvalidStructuredContent_DropsItAndKeepsContent()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var response = new CallToolResponse(false, "[{\"type\":\"text\",\"text\":\"ok\"}]", null, "{broken", "[not an object");
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("wx__weather", cancellationToken: Ct);
+
+        result.IsError.Should().NotBe(true);
+        TextOf(result).Should().Be("ok");
+        result.StructuredContent.Should().BeNull();
+    }
+
+    [Test]
+    public async Task ListTools_ToolWithOutputSchema_ExposesIt()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var catalog = new AgentCatalog("fake", "1.0", ProtocolVersion.Current, [new ServerCatalog("wx", [
+            new ToolDescriptor("weather", null, "W", "{\"type\":\"object\"}", null, "{\"type\":\"object\",\"properties\":{\"temp\":{\"type\":\"number\"}}}"),
+        ])]);
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, catalog, _ => Task.FromResult(FakeAgent.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var tools = await client.ListToolsAsync(cancellationToken: Ct);
+
+        tools.Single().ProtocolTool.OutputSchema?.GetProperty("properties").GetProperty("temp").GetProperty("type").GetString().Should().Be("number");
+    }
+
+    [Test]
+    public async Task CallTool_AgentAnswersMoreThanTheMessageLimit_ReturnsErrorLongBeforeTheTimeout()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var oversize = FakeAgent.Text(new string('x', 11 * 1024 * 1024));
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "big"), _ => Task.FromResult(oversize), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var result = await client.CallToolAsync("kb__big", cancellationToken: Ct);
+
+        result.IsError.Should().BeTrue();
+        clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
+    }
+
+    [Test]
     public async Task CallTool_AgentReportsError_ReturnsIsError()
     {
         await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);

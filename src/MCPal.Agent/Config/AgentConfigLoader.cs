@@ -33,8 +33,18 @@ internal static class AgentConfigLoader
         return Parse(json, environment, requireCloud);
     }
 
-    public static IReadOnlyDictionary<string, string?> CurrentEnvironment() =>
-        new Dictionary<string, string?> { [ApiKeyVariable] = Environment.GetEnvironmentVariable(ApiKeyVariable) };
+    /// <summary>The whole process environment, for <c>${VAR}</c> expansion. Names are case-insensitive on Windows only.</summary>
+    public static IReadOnlyDictionary<string, string?> CurrentEnvironment()
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var variables = new Dictionary<string, string?>(comparer);
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            variables[(string)entry.Key] = entry.Value as string;
+        }
+
+        return variables;
+    }
 
     public static AgentConfig Parse(string json, IReadOnlyDictionary<string, string?> environment, bool requireCloud)
     {
@@ -56,16 +66,21 @@ internal static class AgentConfigLoader
         var servers = new Dictionary<string, LocalServerConfig>(StringComparer.Ordinal);
         foreach (var (name, server) in raw.McpServers ?? [])
         {
-            servers[name] = ParseServer(name, server);
+            servers[name] = ParseServer(name, server, environment);
         }
 
-        return new AgentConfig(cloud, servers, raw.CallTimeoutSeconds is > 0 ? raw.CallTimeoutSeconds.Value : AgentConfig.DefaultCallTimeoutSeconds);
+        var statusFile = string.IsNullOrWhiteSpace(raw.StatusFile) ? null : EnvironmentExpander.Expand(raw.StatusFile, environment, "Config 'statusFile'");
+        return new AgentConfig(cloud, servers, raw.CallTimeoutSeconds is > 0 ? raw.CallTimeoutSeconds.Value : AgentConfig.DefaultCallTimeoutSeconds)
+        {
+            StatusFile = statusFile,
+        };
     }
 
     private static CloudConfig ParseCloud(RawCloud? raw, IReadOnlyDictionary<string, string?> environment, bool required)
     {
         var apiKey = environment.GetValueOrDefault(ApiKeyVariable);
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var apiKeyFromEnvironment = !string.IsNullOrWhiteSpace(apiKey);
+        if (!apiKeyFromEnvironment)
         {
             apiKey = raw?.ApiKey;
         }
@@ -73,6 +88,11 @@ internal static class AgentConfigLoader
         var url = raw?.Url;
         if (required)
         {
+            const string context = "Config section 'cloud'";
+            url = url is null ? null : EnvironmentExpander.Expand(url, environment, context);
+            apiKey = apiKey is null || apiKeyFromEnvironment
+                ? apiKey
+                : EnvironmentExpander.Expand(apiKey, environment, context);
             if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             {
                 throw new AgentConfigException("Config section 'cloud' needs 'url' with an absolute http(s) URL.");
@@ -90,9 +110,9 @@ internal static class AgentConfigLoader
             string.IsNullOrWhiteSpace(raw?.AgentName) ? Environment.MachineName : raw.AgentName);
     }
 
-    private static LocalServerConfig ParseServer(string name, RawServer? raw)
+    private static LocalServerConfig ParseServer(string name, RawServer? raw, IReadOnlyDictionary<string, string?> environment)
     {
-        raw ??= new RawServer();
+        raw = Expand(name, raw ?? new RawServer(), environment);
         var hasCommand = !string.IsNullOrWhiteSpace(raw.Command);
         var hasUrl = !string.IsNullOrWhiteSpace(raw.Url);
         if (string.IsNullOrWhiteSpace(name))
@@ -120,7 +140,40 @@ internal static class AgentConfigLoader
             raw.Args ?? [],
             raw.Env ?? [],
             hasUrl ? raw.Url : null,
-            raw.Headers ?? []);
+            raw.Headers ?? [])
+        {
+            IncludeTools = Patterns(name, "includeTools", raw.IncludeTools),
+            ExcludeTools = Patterns(name, "excludeTools", raw.ExcludeTools),
+        };
+    }
+
+    private static List<string> Patterns(string server, string field, List<string>? patterns)
+    {
+        if (patterns?.Any(string.IsNullOrWhiteSpace) == true)
+        {
+            throw new AgentConfigException($"Server '{server}': '{field}' must not contain empty patterns.");
+        }
+
+        return patterns ?? [];
+    }
+
+    private static RawServer Expand(string name, RawServer raw, IReadOnlyDictionary<string, string?> environment)
+    {
+        var context = $"Server '{name}'";
+        string? One(string? value) => value is null ? null : EnvironmentExpander.Expand(value, environment, context);
+        Dictionary<string, string>? Map(Dictionary<string, string>? values) =>
+            values?.ToDictionary(pair => pair.Key, pair => EnvironmentExpander.Expand(pair.Value, environment, context));
+
+        return new RawServer
+        {
+            Command = One(raw.Command),
+            Args = raw.Args?.Select(arg => EnvironmentExpander.Expand(arg, environment, context)).ToList(),
+            Env = Map(raw.Env),
+            Url = One(raw.Url),
+            Headers = Map(raw.Headers),
+            IncludeTools = raw.IncludeTools,
+            ExcludeTools = raw.ExcludeTools,
+        };
     }
 
     private sealed class RawConfig
@@ -130,6 +183,8 @@ internal static class AgentConfigLoader
         public Dictionary<string, RawServer?>? McpServers { get; set; }
 
         public int? CallTimeoutSeconds { get; set; }
+
+        public string? StatusFile { get; set; }
     }
 
     private sealed class RawCloud
@@ -152,5 +207,9 @@ internal static class AgentConfigLoader
         public string? Url { get; set; }
 
         public Dictionary<string, string>? Headers { get; set; }
+
+        public List<string>? IncludeTools { get; set; }
+
+        public List<string>? ExcludeTools { get; set; }
     }
 }

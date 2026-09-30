@@ -18,9 +18,9 @@ internal sealed class TunnelSweeper(ConnectionRegistry registry, IApiKeyService 
             return 0;
         }
 
-        var active = (await apiKeys.ActiveKeysAsync([.. connections.Select(c => c.ApiKeyId).Distinct()], cancellationToken)).ToHashSet();
+        var active = (await apiKeys.ActiveKeysAsync([.. connections.Select(c => c.ApiKeyId).Distinct()], cancellationToken)).Select(k => (k.CompanyId, k.ApiKeyId)).ToHashSet();
         var closed = 0;
-        foreach (var connection in connections.Where(c => !active.Contains(new ValidatedKey(c.CompanyId, c.ApiKeyId))))
+        foreach (var connection in connections.Where(c => !active.Contains((c.CompanyId, c.ApiKeyId))))
         {
             registry.Remove(connection.CompanyId, connection.ConnectionId);
             connection.Abort();

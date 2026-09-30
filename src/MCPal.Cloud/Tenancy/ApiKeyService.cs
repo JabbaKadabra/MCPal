@@ -5,9 +5,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCPal.Cloud.Tenancy;
 
-internal sealed record CreatedApiKey(Guid Id, string Name, string Prefix, string RawKey, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt);
+internal sealed record CreatedApiKey(
+    Guid Id,
+    string Name,
+    string Prefix,
+    string RawKey,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt,
+    ApiKeyPurpose Purpose,
+    IReadOnlyList<string> AllowedServers);
 
-internal sealed record ValidatedKey(Guid CompanyId, Guid ApiKeyId);
+internal sealed record ValidatedKey(Guid CompanyId, Guid ApiKeyId, ApiKeyPurpose Purpose, IReadOnlyList<string> AllowedServers);
 
 /// <summary>Notified after an API key is revoked, e.g. to close its tunnels.</summary>
 internal interface IApiKeyRevocationListener
@@ -15,9 +23,35 @@ internal interface IApiKeyRevocationListener
     Task OnRevokedAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken);
 }
 
+/// <param name="AllowedServers">Server names a client key may use; empty or null means all. Agent keys take none.</param>
+/// <param name="CreatedByUserId">The portal user who creates the key, so members can manage their own keys.</param>
+internal sealed record NewApiKey(
+    string Name,
+    DateTimeOffset? ExpiresAt = null,
+    ApiKeyPurpose Purpose = ApiKeyPurpose.Any,
+    IReadOnlyList<string>? AllowedServers = null,
+    string? CreatedByUserId = null);
+
+internal static class ApiKeyServiceExtensions
+{
+    /// <summary>Creates a key without restrictions (<see cref="ApiKeyPurpose.Any"/>).</summary>
+    public static Task<CreatedApiKey> CreateAsync(this IApiKeyService service, Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        return service.CreateAsync(companyId, new NewApiKey(name, expiresAt), cancellationToken);
+    }
+
+    public static Task<CreatedApiKey> CreateAsync(
+        this IApiKeyService service, Guid companyId, string name, DateTimeOffset? expiresAt, ApiKeyPurpose purpose, IReadOnlyList<string> allowedServers, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        return service.CreateAsync(companyId, new NewApiKey(name, expiresAt, purpose, allowedServers), cancellationToken);
+    }
+}
+
 internal interface IApiKeyService
 {
-    Task<CreatedApiKey> CreateAsync(Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken);
+    Task<CreatedApiKey> CreateAsync(Guid companyId, NewApiKey request, CancellationToken cancellationToken);
 
     Task<ValidatedKey?> ValidateAsync(string rawKey, CancellationToken cancellationToken);
 
@@ -46,9 +80,17 @@ internal sealed class ApiKeyService(
     private const int DisplayPrefixLength = 21;
     private static readonly TimeSpan LastUsedThrottle = TimeSpan.FromMinutes(5);
 
-    public async Task<CreatedApiKey> CreateAsync(Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
+    public async Task<CreatedApiKey> CreateAsync(Guid companyId, NewApiKey request, CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+
+        var (name, expiresAt, purpose, _, createdByUserId) = request;
+        var servers = NormalizeServers(request.AllowedServers ?? []);
+        if (purpose == ApiKeyPurpose.Agent && servers.Length > 0)
+        {
+            throw new ArgumentException("Agent keys cannot be restricted to servers.", nameof(request));
+        }
 
         var rawKey = $"{KeyPrefix}{companyId.ToString("N")[..8]}_{RandomNumberGenerator.GetString(Alphabet, SecretLength)}";
         var now = timeProvider.GetUtcNow();
@@ -61,10 +103,13 @@ internal sealed class ApiKeyService(
             KeyHash = Hash(rawKey),
             CreatedAt = now,
             ExpiresAt = expiresAt,
+            Purpose = purpose,
+            AllowedServers = servers,
+            CreatedByUserId = createdByUserId,
         };
         db.ApiKeys.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
-        return new CreatedApiKey(entity.Id, entity.Name, entity.Prefix, rawKey, entity.CreatedAt, entity.ExpiresAt);
+        return new CreatedApiKey(entity.Id, entity.Name, entity.Prefix, rawKey, entity.CreatedAt, entity.ExpiresAt, entity.Purpose, entity.AllowedServers);
     }
 
     public async Task<ValidatedKey?> ValidateAsync(string rawKey, CancellationToken cancellationToken)
@@ -79,7 +124,7 @@ internal sealed class ApiKeyService(
         var key = await db.ApiKeys.AsNoTracking()
             .Active(db.Companies, now)
             .Where(k => k.KeyHash == hash)
-            .Select(k => new { k.Id, k.CompanyId, k.LastUsedAt })
+            .Select(k => new { k.Id, k.CompanyId, k.LastUsedAt, k.Purpose, k.AllowedServers })
             .FirstOrDefaultAsync(cancellationToken);
         if (key is null)
         {
@@ -91,7 +136,7 @@ internal sealed class ApiKeyService(
             await db.ApiKeys.Where(k => k.Id == key.Id).ExecuteUpdateAsync(s => s.SetProperty(k => k.LastUsedAt, now), cancellationToken);
         }
 
-        return new ValidatedKey(key.CompanyId, key.Id);
+        return new ValidatedKey(key.CompanyId, key.Id, key.Purpose, key.AllowedServers);
     }
 
     public async Task<IReadOnlyList<ApiKey>> ListAsync(Guid companyId, CancellationToken cancellationToken)
@@ -134,9 +179,13 @@ internal sealed class ApiKeyService(
         return await db.ApiKeys.AsNoTracking()
             .Active(db.Companies, timeProvider.GetUtcNow())
             .Where(k => apiKeyIds.Contains(k.Id))
-            .Select(k => new ValidatedKey(k.CompanyId, k.Id))
+            .Select(k => new ValidatedKey(k.CompanyId, k.Id, k.Purpose, k.AllowedServers))
             .ToListAsync(cancellationToken);
     }
+
+    /// <summary>Trims, drops blanks and duplicates (server names are compared without case).</summary>
+    private static string[] NormalizeServers(IReadOnlyList<string> servers) =>
+        [.. servers.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     internal static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 

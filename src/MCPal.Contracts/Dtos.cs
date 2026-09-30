@@ -1,7 +1,10 @@
 namespace MCPal.Contracts;
 
-/// <summary>A tool exposed by a local MCP server. Schema travels as a JSON string so Contracts stays SDK-free.</summary>
-public sealed record ToolDescriptor(string Name, string? Title, string? Description, string InputSchemaJson, string? AnnotationsJson);
+/// <summary>
+/// A tool exposed by a local MCP server. Schemas travel as JSON strings so Contracts stays SDK-free.
+/// <paramref name="OutputSchemaJson"/> (protocol 1.1) is the tool's <c>outputSchema</c>, null when it declares none.
+/// </summary>
+public sealed record ToolDescriptor(string Name, string? Title, string? Description, string InputSchemaJson, string? AnnotationsJson, string? OutputSchemaJson = null);
 
 public sealed record ServerCatalog(string Name, IReadOnlyList<ToolDescriptor> Tools);
 
@@ -12,9 +15,29 @@ public sealed record RejectedServer(string ServerName, string Reason);
 /// <summary>A tool of an accepted server that the cloud does not expose, e.g. because its schema is invalid or its public name is taken.</summary>
 public sealed record RejectedTool(string ServerName, string ToolName, string Reason);
 
-public sealed record RegisterResult(bool Accepted, IReadOnlyList<RejectedServer> RejectedServers, IReadOnlyList<RejectedTool> RejectedTools, string? Message);
+/// <param name="Code">
+/// Machine-readable reason when <paramref name="Accepted"/> is false (see <see cref="RegisterCodes"/>); null otherwise and for clouds
+/// older than protocol 1.1. Lets the agent react without parsing <paramref name="Message"/>.
+/// </param>
+public sealed record RegisterResult(
+    bool Accepted,
+    IReadOnlyList<RejectedServer> RejectedServers,
+    IReadOnlyList<RejectedTool> RejectedTools,
+    string? Message,
+    string? Code = null);
 
-public sealed record CallToolRequest(string RequestId, string ServerName, string ToolName, string ArgumentsJson);
+/// <summary>Values of <see cref="RegisterResult.Code"/>.</summary>
+public static class RegisterCodes
+{
+    /// <summary>The agent's protocol major version differs from the cloud's: this agent is too old or too new for the cloud.</summary>
+    public const string UnsupportedProtocol = "unsupported_protocol";
+}
 
-/// <summary><paramref name="ContentJson"/> holds the serialized MCP CallToolResult content array.</summary>
-public sealed record CallToolResponse(bool IsError, string ContentJson, string? ErrorMessage);
+/// <summary><paramref name="TraceParent"/> (protocol 1.1) is the W3C <c>traceparent</c> of the cloud's tool call span, so the agent's span joins the same trace.</summary>
+public sealed record CallToolRequest(string RequestId, string ServerName, string ToolName, string ArgumentsJson, string? TraceParent = null);
+
+/// <summary>
+/// <paramref name="ContentJson"/> holds the serialized MCP CallToolResult content array. Protocol 1.1 adds
+/// <paramref name="StructuredContentJson"/> (the result's <c>structuredContent</c>) and <paramref name="MetaJson"/> (its <c>_meta</c>).
+/// </summary>
+public sealed record CallToolResponse(bool IsError, string ContentJson, string? ErrorMessage, string? StructuredContentJson = null, string? MetaJson = null);

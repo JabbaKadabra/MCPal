@@ -1,0 +1,163 @@
+name: Release
+
+# Push a tag vX.Y.Z to release: the agent for Linux and Windows (archives with install scripts), sha256sums.txt,
+# a GitHub release, and the cloud image on GHCR. The tag is the version.
+# Run it by hand (workflow_dispatch) with dry_run to build everything without creating the release or pushing the image.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, e.g. 1.1.0 (a tag run uses the tag)
+        required: true
+        default: 0.0.0-test
+      dry_run:
+        description: Build and package only; skip the GitHub release and the image push
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+    steps:
+      - id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            dry_run=false
+          else
+            version="${{ inputs.version }}"
+            dry_run="${{ inputs.dry_run }}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "'$version' is not a version like 1.2.3" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+  # Build and tests first: nothing is released from a red commit.
+  verify:
+    name: Build and test
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  agent:
+    name: Agent ${{ matrix.rid }}
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        rid: [linux-x64, linux-arm64, win-x64]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # Windows code signing is optional: without the secrets the archive holds an unsigned binary.
+      SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+      SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish
+        run: scripts/publish-agent.sh --version "$VERSION" ${{ matrix.rid }}
+
+      - name: Sign the Windows binary
+        if: matrix.rid == 'win-x64' && env.SIGNING_PFX_BASE64 != ''
+        run: |
+          sudo apt-get update && sudo apt-get install -y osslsigncode
+          echo "$SIGNING_PFX_BASE64" | base64 -d > "$RUNNER_TEMP/signing.pfx"
+          exe=artifacts/agent/win-x64/MCPal.Agent.exe
+          osslsigncode sign -pkcs12 "$RUNNER_TEMP/signing.pfx" -pass "$SIGNING_PFX_PASSWORD" \
+            -n "MCPal Agent" -i https://github.com/${{ github.repository }} \
+            -t http://timestamp.digicert.com -in "$exe" -out "$exe.signed"
+          mv "$exe.signed" "$exe"
+          rm -f "$RUNNER_TEMP/signing.pfx"
+
+      - name: Package
+        run: scripts/package-agent.sh "$VERSION" ${{ matrix.rid }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.rid }}
+          path: artifacts/release/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [version, agent]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: release
+          pattern: agent-*
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: release
+        run: |
+          sha256sum mcpal-agent-* > sha256sums.txt
+          cat sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: release/*
+
+      - name: Create the release
+        if: needs.version.outputs.dry_run != 'true'
+        run: |
+          gh release create "v$VERSION" release/* \
+            --repo "${{ github.repository }}" \
+            --title "MCPal $VERSION" \
+            --generate-notes \
+            $([[ "$VERSION" == *-* ]] && echo --prerelease)
+
+  image:
+    name: Cloud image
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: needs.version.outputs.dry_run != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: names
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mcpal-cloud" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/MCPal.Cloud/Dockerfile
+          push: ${{ needs.version.outputs.dry_run != 'true' }}
+          tags: |
+            ${{ steps.names.outputs.image }}:${{ needs.version.outputs.version }}
+            ${{ steps.names.outputs.image }}:latest

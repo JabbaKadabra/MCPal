@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetCsrfToken } from '../api/client';
 import type { ApiKey } from '../api/types';
-import { mockFetch } from '../test/fetchMock';
+import { mockFetch, type RecordedCall } from '../test/fetchMock';
 import { KeysPage } from './KeysPage';
 
 function renderPage() {
@@ -27,7 +27,18 @@ const existing: ApiKey = {
   expiresAt: null,
   lastUsedAt: null,
   disabled: false,
+  purpose: 'agent',
+  allowedServers: [],
 };
+
+/** The page reads keys and, for server suggestions, connections. */
+function withConnections(keys: ApiKey[], role: 'owner' | 'member' = 'owner') {
+  return (call: RecordedCall) => {
+    if (call.url === '/api/portal/connections') return { body: [] };
+    if (call.url === '/api/portal/auth/me') return { body: { email: 'a@b.c', companyId: 'c', companyName: 'Acme', role } };
+    return { body: keys };
+  };
+}
 
 describe('KeysPage', () => {
   beforeEach(() => {
@@ -39,7 +50,7 @@ describe('KeysPage', () => {
   });
 
   it('lists keys with prefix only', async () => {
-    mockFetch(() => ({ body: [existing] }));
+    mockFetch(withConnections([existing]));
 
     renderPage();
 
@@ -58,6 +69,7 @@ describe('KeysPage', () => {
         created = true;
         return { status: 201, body: { ...existing, id: 'k2', name: 'New', key: 'mcpal_12345678_secretsecretsecret' } };
       }
+      if (call.url === '/api/portal/connections') return { body: [] };
       return { body: created ? [existing] : [] };
     });
     const user = userEvent.setup();
@@ -75,7 +87,7 @@ describe('KeysPage', () => {
     const calls = mockFetch((call) => {
       if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
       if (call.method === 'DELETE') return { status: 204 };
-      return { body: [existing] };
+      return withConnections([existing])(call);
     });
     const user = userEvent.setup();
     renderPage();
@@ -87,12 +99,108 @@ describe('KeysPage', () => {
 
   it('does not revoke when the confirmation is declined', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
-    const calls = mockFetch(() => ({ body: [existing] }));
+    const calls = mockFetch(withConnections([existing]));
     const user = userEvent.setup();
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Revoke' }));
 
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+
+  it('shows purpose and server restrictions in the key list', async () => {
+    const restricted: ApiKey = { ...existing, id: 'k2', name: 'Jira team', purpose: 'client', allowedServers: ['jira', 'wiki'] };
+    const anyKey: ApiKey = { ...existing, id: 'k3', name: 'Old key', purpose: 'any', allowedServers: [] };
+    mockFetch(withConnections([existing, restricted, anyKey]));
+
+    renderPage();
+
+    const agentRow = (await screen.findByText('HQ agent')).closest('tr');
+    const clientRow = screen.getByText('Jira team').closest('tr');
+    const anyRow = screen.getByText('Old key').closest('tr');
+    if (agentRow === null || clientRow === null || anyRow === null) throw new Error('rows missing');
+    expect(within(agentRow).getByText('Agent')).toBeInTheDocument();
+    expect(within(clientRow).getByText('Claude')).toBeInTheDocument();
+    expect(within(clientRow).getByText('jira, wiki')).toBeInTheDocument();
+    expect(within(anyRow).getByText('Agent and Claude')).toBeInTheDocument();
+    expect(within(anyRow).getByText('All servers')).toBeInTheDocument();
+  });
+
+  it('creates a Claude key by default and sends purpose, servers and expiry', async () => {
+    const calls = mockFetch((call) => {
+      if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
+      if (call.method === 'POST') return { status: 201, body: { ...existing, id: 'k9', key: 'mcpal_12345678_x', purpose: 'client', allowedServers: ['jira'] } };
+      if (call.url === '/api/portal/connections') return { body: [] };
+      return { body: [] };
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByLabelText('Used by')).toHaveValue('client');
+    await user.type(screen.getByLabelText('Key name'), 'Jira team');
+    await user.type(screen.getByLabelText('Allowed servers'), 'jira, Wiki ,');
+    await user.type(screen.getByLabelText('Expires on'), '2030-01-31');
+    await user.click(screen.getByRole('button', { name: 'Create key' }));
+
+    await screen.findByTestId('created-key');
+    const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
+    expect(post?.body).toMatchObject({ name: 'Jira team', purpose: 'client', allowedServers: ['jira', 'Wiki'] });
+    const expiresAt = (post?.body as { expiresAt: string }).expiresAt;
+    expect(new Date(expiresAt).getFullYear()).toBe(2030);
+  });
+
+  it('creates an agent key without server restrictions and hides that field', async () => {
+    const calls = mockFetch((call) => {
+      if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
+      if (call.method === 'POST') return { status: 201, body: { ...existing, id: 'k9', key: 'mcpal_12345678_x' } };
+      return { body: [] };
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.selectOptions(await screen.findByLabelText('Used by'), 'agent');
+    expect(screen.queryByLabelText('Allowed servers')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Key name'), 'HQ agent');
+    await user.click(screen.getByRole('button', { name: 'Create key' }));
+
+    await screen.findByTestId('created-key');
+    const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
+    expect(post?.body).toMatchObject({ purpose: 'agent', allowedServers: [] });
+    expect((post?.body as { expiresAt?: string }).expiresAt).toBeUndefined();
+  });
+
+  it('suggests the servers of connected agents', async () => {
+    mockFetch((call) => {
+      if (call.url === '/api/portal/connections') {
+        return { body: [{ agentName: 'hq', connectedAt: '2026-01-01T10:00:00Z', apiKeyName: null, servers: [{ name: 'jira', tools: ['a'] }], rejected: [], rejectedTools: [] }] };
+      }
+      return { body: [] };
+    });
+
+    const { container } = renderPage();
+
+    await screen.findByLabelText('Allowed servers');
+    await vi.waitFor(() => expect(container.querySelector('datalist option[value="jira"]')).not.toBeNull());
+  });
+
+  it('offers members only keys for Claude', async () => {
+    mockFetch(withConnections([], 'member'));
+
+    renderPage();
+
+    const select = await screen.findByLabelText('Used by');
+    await vi.waitFor(() => expect(within(select).queryByRole('option', { name: 'An agent in your network' })).not.toBeInTheDocument());
+    expect(within(select).getByRole('option', { name: 'Claude (users)' })).toBeInTheDocument();
+    expect(within(select).queryByRole('option', { name: /legacy/ })).not.toBeInTheDocument();
+  });
+
+  it('shows who created a key to owners', async () => {
+    mockFetch(withConnections([{ ...existing, createdBy: 'member@acme.example' }]));
+
+    renderPage();
+
+    const row = (await screen.findByText('HQ agent')).closest('tr');
+    if (row === null) throw new Error('row missing');
+    expect(within(row).getByText('member@acme.example')).toBeInTheDocument();
   });
 });

@@ -16,9 +16,12 @@ export function ConnectionsPage() {
         <section className="card" key={`${connection.agentName}-${index}`}>
           <h2>{connection.agentName}</h2>
           <p className="muted">
-            {t('connections.since')} {new Date(connection.connectedAt).toLocaleString()}
+            {t('connections.version', { version: connection.agentVersion })} · {t('connections.since')} {new Date(connection.connectedAt).toLocaleString()}
             {connection.apiKeyName !== null && ` · ${t('connections.key')} ${connection.apiKeyName}`}
           </p>
+          {connection.updateAvailable && connection.latestAgentVersion !== null && (
+            <p className="notice">{t('connections.update', { latest: connection.latestAgentVersion })}</p>
+          )}
           <ul>
             {connection.servers.map((server) => (
               <li key={server.name}>

@@ -82,6 +82,24 @@ describe('OAuthAuthorizePage', () => {
     expect(assign).not.toHaveBeenCalled();
   });
 
+  it('tells the user when the key is meant for agents only', async () => {
+    mockFetch((call) => {
+      if (call.url.startsWith('/api/oauth/authorize/context')) {
+        return { body: { clientName: 'Claude', redirectHost: 'claude.ai', signedInCompany: null } };
+      }
+      if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
+      return { status: 403, body: { error: 'key_not_allowed', error_description: 'This key can only be used by an agent.' } };
+    });
+    const user = userEvent.setup();
+    renderPage(search);
+
+    await user.type(await screen.findByLabelText('API key'), 'mcpal_agentkey');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This key can only be used by an agent.');
+    expect(assign).not.toHaveBeenCalled();
+  });
+
   it('offers to connect as the signed-in company', async () => {
     const calls = mockFetch((call) => {
       if (call.url.startsWith('/api/oauth/authorize/context')) {

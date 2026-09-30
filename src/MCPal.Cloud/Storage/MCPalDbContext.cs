@@ -1,4 +1,6 @@
+using MCPal.Cloud.Audit;
 using MCPal.Cloud.OAuth;
+using MCPal.Cloud.Portal;
 using MCPal.Cloud.Tenancy;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +18,10 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
     public DbSet<AuthorizationCode> AuthorizationCodes => Set<AuthorizationCode>();
 
     public DbSet<OAuthToken> OAuthTokens => Set<OAuthToken>();
+
+    public DbSet<ToolCallAudit> ToolCallAudits => Set<ToolCallAudit>();
+
+    public DbSet<Invitation> Invitations => Set<Invitation>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -36,6 +42,7 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             key.Property(k => k.Name).HasMaxLength(200);
             key.Property(k => k.Prefix).HasMaxLength(32);
             key.Property(k => k.KeyHash).HasMaxLength(64);
+            key.Property(k => k.AllowedServers).HasColumnType("text[]");
             key.HasIndex(k => k.KeyHash).IsUnique();
             key.HasIndex(k => k.CompanyId);
             key.HasOne<Company>().WithMany().HasForeignKey(k => k.CompanyId).OnDelete(DeleteBehavior.Restrict);
@@ -44,7 +51,19 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
         builder.Entity<PortalUser>(user =>
         {
             user.HasIndex(u => u.CompanyId);
+            user.Property(u => u.Role).HasConversion<string>().HasMaxLength(16);
             user.HasOne<Company>().WithMany().HasForeignKey(u => u.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<Invitation>(invitation =>
+        {
+            invitation.HasKey(i => i.Id);
+            invitation.Property(i => i.Email).HasMaxLength(256);
+            invitation.Property(i => i.Role).HasConversion<string>().HasMaxLength(16);
+            invitation.Property(i => i.TokenHash).HasMaxLength(64);
+            invitation.HasIndex(i => i.TokenHash).IsUnique();
+            invitation.HasIndex(i => new { i.CompanyId, i.Email });
+            invitation.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<OAuthClient>(client =>
@@ -59,6 +78,22 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             code.HasKey(c => c.CodeHash);
             code.Property(c => c.CodeHash).HasMaxLength(64);
             code.HasIndex(c => c.ExpiresAt);
+        });
+
+        builder.Entity<ToolCallAudit>(audit =>
+        {
+            audit.HasKey(a => a.Id);
+            audit.Property(a => a.AuthKind).HasMaxLength(AuditColumns.AuthKind);
+            audit.Property(a => a.OAuthClientId).HasMaxLength(AuditColumns.OAuthClientId);
+            audit.Property(a => a.AgentName).HasMaxLength(AuditColumns.Name);
+            audit.Property(a => a.ServerName).HasMaxLength(AuditColumns.Name);
+            audit.Property(a => a.ToolName).HasMaxLength(AuditColumns.Name);
+            audit.Property(a => a.PublicName).HasMaxLength(AuditColumns.PublicName);
+            audit.Property(a => a.Outcome).HasMaxLength(AuditColumns.Outcome);
+            audit.Property(a => a.ErrorMessage).HasMaxLength(AuditColumns.ErrorMessage);
+            audit.HasIndex(a => new { a.CompanyId, a.OccurredAt });
+            audit.HasIndex(a => a.OccurredAt);
+            audit.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<OAuthToken>(token =>

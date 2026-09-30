@@ -26,6 +26,12 @@ internal static class ToolNaming
         return string.Concat(name.AsSpan(0, MaxLength - HashLength - 1), "_", hash);
     }
 
+    public const int MaxServerNameLength = 200;
+
+    /// <summary>Whether the text can name a server: not blank, at most 200 characters and no control characters.</summary>
+    public static bool IsValidServerName(string? serverName) =>
+        !string.IsNullOrWhiteSpace(serverName) && serverName.Length <= MaxServerNameLength && !serverName.Any(char.IsControl);
+
     private static string Sanitize(string value)
     {
         var builder = new StringBuilder(value.Length);

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using MCPal.Cloud.Audit;
 using MCPal.Cloud.Storage;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
@@ -14,13 +15,25 @@ internal sealed record SignupRequest(string? CompanyName, string? Email, string?
 
 internal sealed record LoginRequest(string? Email, string? Password);
 
-internal sealed record CreateKeyRequest(string? Name, DateTimeOffset? ExpiresAt);
+internal sealed record CreateKeyRequest(string? Name, DateTimeOffset? ExpiresAt, string? Purpose = null, IReadOnlyList<string>? AllowedServers = null);
 
-internal sealed record MeResponse(string Email, Guid CompanyId, string CompanyName);
+/// <param name="Role"><c>owner</c> or <c>member</c>.</param>
+internal sealed record MeResponse(string Email, Guid CompanyId, string CompanyName, string Role);
 
-internal sealed record ApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? LastUsedAt, bool Disabled);
+/// <param name="Purpose"><c>any</c>, <c>agent</c> or <c>client</c>.</param>
+internal sealed record ApiKeyResponse(
+    Guid Id,
+    string Name,
+    string Prefix,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? ExpiresAt,
+    DateTimeOffset? LastUsedAt,
+    bool Disabled,
+    string Purpose,
+    IReadOnlyList<string> AllowedServers,
+    string? CreatedBy);
 
-internal sealed record CreatedApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string Key);
+internal sealed record CreatedApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string Key, string Purpose, IReadOnlyList<string> AllowedServers);
 
 internal sealed record ServerResponse(string Name, IReadOnlyList<string> Tools);
 
@@ -30,6 +43,9 @@ internal sealed record RejectedToolResponse(string Server, string Tool, string R
 
 internal sealed record ConnectionResponse(
     string AgentName,
+    string AgentVersion,
+    bool UpdateAvailable,
+    string? LatestAgentVersion,
     DateTimeOffset ConnectedAt,
     string? ApiKeyName,
     IReadOnlyList<ServerResponse> Servers,
@@ -54,14 +70,17 @@ internal static class PortalEndpoints
         auth.MapPost("signup", SignupAsync);
         auth.MapPost("login", LoginAsync);
         auth.MapPost("logout", LogoutAsync);
+        AccountEndpoints.Map(auth);
         auth.MapGet("me", MeAsync).RequireAuthorization(Policy);
 
         var secured = group.MapGroup(string.Empty).RequireAuthorization(Policy);
+        TeamEndpoints.Map(group, secured);
         secured.MapGet("keys", ListKeysAsync);
         secured.MapPost("keys", CreateKeyAsync);
         secured.MapDelete("keys/{id:guid}", RevokeKeyAsync);
         secured.MapGet("connections", ConnectionsAsync);
         secured.MapGet("connect-info", ConnectInfo);
+        AuditEndpoints.Map(secured);
     }
 
     private static IResult Csrf(HttpContext context, IAntiforgery antiforgery)
@@ -74,6 +93,7 @@ internal static class PortalEndpoints
         SignupRequest? request,
         UserManager<PortalUser> users,
         SignInManager<PortalUser> signIn,
+        AccountMailer mailer,
         ICompanyService companies,
         MCPalDbContext db,
         CancellationToken cancellationToken)
@@ -102,7 +122,7 @@ internal static class PortalEndpoints
         // Company and user share one transaction: a rejected password or email must not leave a company (and its slug) behind.
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var company = await companies.CreateAsync(request.CompanyName, cancellationToken);
-        var user = new PortalUser { UserName = request.Email, Email = request.Email, CompanyId = company.Id };
+        var user = new PortalUser { UserName = request.Email, Email = request.Email, CompanyId = company.Id, Role = PortalRole.Owner };
         var created = await users.CreateAsync(user, request.Password);
         if (!created.Succeeded)
         {
@@ -111,8 +131,11 @@ internal static class PortalEndpoints
         }
 
         await transaction.CommitAsync(cancellationToken);
+
+        // New accounts start unconfirmed and are signed in right away; the mail keeps later password logins possible.
+        await mailer.SendConfirmationAsync(user, cancellationToken);
         await signIn.SignInAsync(user, isPersistent: true);
-        return Results.Json(new MeResponse(request.Email, company.Id, company.Name), statusCode: 201);
+        return Results.Json(new MeResponse(request.Email, company.Id, company.Name, TeamEndpoints.RoleName(PortalRole.Owner)), statusCode: 201);
     }
 
     private static async Task<IResult> LoginAsync(LoginRequest? request, UserManager<PortalUser> users, SignInManager<PortalUser> signIn, ICompanyService companies, CancellationToken cancellationToken)
@@ -129,13 +152,26 @@ internal static class PortalEndpoints
         }
 
         var result = await signIn.PasswordSignInAsync(user, request.Password, isPersistent: true, lockoutOnFailure: true);
+        if (result.IsNotAllowed)
+        {
+            // Sign-in checks the confirmation before the password. Only tell a caller who knows the password that the
+            // address is unconfirmed; a wrong password must look like it does for every other account.
+            if (!await users.CheckPasswordAsync(user, request.Password))
+            {
+                await users.AccessFailedAsync(user);
+                return InvalidLogin();
+            }
+
+            return Results.Json(new { errors = EmailNotConfirmedErrors, error = "email_not_confirmed" }, statusCode: 403);
+        }
+
         if (!result.Succeeded)
         {
             return InvalidLogin();
         }
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return Results.Json(new MeResponse(request.Email, user.CompanyId, company?.Name ?? string.Empty));
+        return Results.Json(new MeResponse(request.Email, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role)));
     }
 
     private static async Task<IResult> LogoutAsync(SignInManager<PortalUser> signIn)
@@ -153,23 +189,29 @@ internal static class PortalEndpoints
         }
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty));
+        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role)));
     }
 
-    private static async Task<IResult> ListKeysAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, IApiKeyService keys, CancellationToken cancellationToken)
+    private static async Task<IResult> ListKeysAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, IApiKeyService keys, MCPalDbContext db, CancellationToken cancellationToken)
     {
-        if (await CompanyOfAsync(principal, users) is not { } companyId)
+        if (await users.GetUserAsync(principal) is not { } user)
         {
             return Results.Unauthorized();
         }
 
-        var list = await keys.ListAsync(companyId, cancellationToken);
-        return Results.Json(list.Select(k => new ApiKeyResponse(k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.LastUsedAt, k.Disabled)));
+        // Owners see every key of the company, members only the ones they created.
+        var list = await keys.ListAsync(user.CompanyId, cancellationToken);
+        var emails = await db.Users.AsNoTracking().Where(u => u.CompanyId == user.CompanyId).ToDictionaryAsync(u => u.Id, u => u.Email ?? string.Empty, cancellationToken);
+        return Results.Json(list
+            .Where(k => user.Role == PortalRole.Owner || k.CreatedByUserId == user.Id)
+            .Select(k => new ApiKeyResponse(
+                k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.LastUsedAt, k.Disabled, PurposeName(k.Purpose), k.AllowedServers,
+                k.CreatedByUserId is { } creator ? emails.GetValueOrDefault(creator) : null)));
     }
 
     private static async Task<IResult> CreateKeyAsync(CreateKeyRequest? request, ClaimsPrincipal principal, UserManager<PortalUser> users, IApiKeyService keys, TimeProvider time, CancellationToken cancellationToken)
     {
-        if (await CompanyOfAsync(principal, users) is not { } companyId)
+        if (await users.GetUserAsync(principal) is not { } user)
         {
             return Results.Unauthorized();
         }
@@ -184,21 +226,48 @@ internal static class PortalEndpoints
             return Problems(["The expiry must be in the future."]);
         }
 
-        var created = await keys.CreateAsync(companyId, request.Name, request.ExpiresAt, cancellationToken);
-        return Results.Json(new CreatedApiKeyResponse(created.Id, created.Name, created.Prefix, created.CreatedAt, created.ExpiresAt, created.RawKey), statusCode: 201);
+        var purpose = ApiKeyPurpose.Any;
+        if (request.Purpose is { Length: > 0 } purposeText && !Enum.TryParse(purposeText, ignoreCase: true, out purpose))
+        {
+            return Problems(["The purpose must be 'any', 'agent' or 'client'."]);
+        }
+
+        // Members get access to Claude for themselves. Keys for agents (and the legacy 'any') open tunnels and are the owners' business.
+        if (user.Role != PortalRole.Owner && (request.Purpose is null || purpose != ApiKeyPurpose.Client))
+        {
+            return Problems(["Members can only create keys for Claude (purpose 'client'). Ask an owner for an agent key."], 403);
+        }
+
+        var servers = request.AllowedServers ?? [];
+        if (ServerRestrictionProblem(purpose, servers) is { } problem)
+        {
+            return Problems([problem]);
+        }
+
+        var created = await keys.CreateAsync(user.CompanyId, new NewApiKey(request.Name, request.ExpiresAt, purpose, servers, user.Id), cancellationToken);
+        return Results.Json(
+            new CreatedApiKeyResponse(created.Id, created.Name, created.Prefix, created.CreatedAt, created.ExpiresAt, created.RawKey, PurposeName(created.Purpose), created.AllowedServers),
+            statusCode: 201);
     }
 
     private static async Task<IResult> RevokeKeyAsync(Guid id, ClaimsPrincipal principal, UserManager<PortalUser> users, IApiKeyService keys, CancellationToken cancellationToken)
     {
-        if (await CompanyOfAsync(principal, users) is not { } companyId)
+        if (await users.GetUserAsync(principal) is not { } user)
         {
             return Results.Unauthorized();
         }
 
-        return await keys.RevokeAsync(companyId, id, cancellationToken) ? Results.NoContent() : Results.NotFound();
+        // A key a member does not own looks like a key that does not exist.
+        if (user.Role != PortalRole.Owner
+            && (await keys.ListAsync(user.CompanyId, cancellationToken)).All(k => k.Id != id || k.CreatedByUserId != user.Id))
+        {
+            return Results.NotFound();
+        }
+
+        return await keys.RevokeAsync(user.CompanyId, id, cancellationToken) ? Results.NoContent() : Results.NotFound();
     }
 
-    private static async Task<IResult> ConnectionsAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, ConnectionRegistry registry, MCPalDbContext db, CancellationToken cancellationToken)
+    private static async Task<IResult> ConnectionsAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, ConnectionRegistry registry, MCPalDbContext db, IOptions<McpalOptions> options, CancellationToken cancellationToken)
     {
         if (await CompanyOfAsync(principal, users) is not { } companyId)
         {
@@ -206,8 +275,12 @@ internal static class PortalEndpoints
         }
 
         var keyNames = await db.ApiKeys.AsNoTracking().Where(k => k.CompanyId == companyId).ToDictionaryAsync(k => k.Id, k => k.Name, cancellationToken);
+        var latest = string.IsNullOrWhiteSpace(options.Value.LatestAgentVersion) ? null : options.Value.LatestAgentVersion.Trim();
         var connections = registry.Connections(companyId).Select(c => new ConnectionResponse(
             c.AgentName,
+            c.AgentVersion,
+            AgentVersions.IsOlder(c.AgentVersion, latest),
+            latest,
             c.ConnectedAt,
             keyNames.GetValueOrDefault(c.ApiKeyId),
             [.. c.Servers.Select(s => new ServerResponse(s.Name, [.. s.Tools.Select(t => t.Descriptor.Name)]))],
@@ -227,7 +300,34 @@ internal static class PortalEndpoints
             $"claude mcp add --transport http mcpal {url} --header \"Authorization: Bearer <api-key>\""));
     }
 
-    private static async Task<Guid?> CompanyOfAsync(ClaimsPrincipal principal, UserManager<PortalUser> users) =>
+    private const int MaxAllowedServers = 50;
+
+    private static readonly string[] EmailNotConfirmedErrors = ["Confirm your email address first. Use the link in the mail we sent you, or ask for a new one."];
+
+    private static string PurposeName(ApiKeyPurpose purpose) => purpose.ToString().ToLowerInvariant();
+
+    /// <summary>Servers may be named before they are online, so only their shape is checked.</summary>
+    private static string? ServerRestrictionProblem(ApiKeyPurpose purpose, IReadOnlyList<string> servers)
+    {
+        if (servers.Count == 0)
+        {
+            return null;
+        }
+
+        if (purpose == ApiKeyPurpose.Agent)
+        {
+            return "Agent keys cannot be restricted to servers.";
+        }
+
+        if (servers.Count > MaxAllowedServers)
+        {
+            return $"At most {MaxAllowedServers} servers can be listed.";
+        }
+
+        return servers.Any(server => !ToolNaming.IsValidServerName(server)) ? "A server name is empty, longer than 200 characters or contains control characters." : null;
+    }
+
+    internal static async Task<Guid?> CompanyOfAsync(ClaimsPrincipal principal, UserManager<PortalUser> users) =>
         (await users.GetUserAsync(principal))?.CompanyId;
 
     internal static IResult Problems(IEnumerable<string> errors, int status = 400) => Results.Json(new { errors = errors.ToArray() }, statusCode: status);

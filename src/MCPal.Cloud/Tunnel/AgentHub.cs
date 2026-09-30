@@ -1,3 +1,4 @@
+using MCPal.Cloud.Diagnostics;
 using MCPal.Cloud.Tenancy;
 using MCPal.Contracts;
 using Microsoft.AspNetCore.Authorization;
@@ -9,7 +10,7 @@ namespace MCPal.Cloud.Tunnel;
 /// Tunnel endpoint for agents. Company and API key come from the authenticated principal, never from the payload.
 /// </summary>
 [Authorize(AuthenticationSchemes = McpBearerDefaults.Scheme, Policy = McpBearerDefaults.TunnelPolicy)]
-internal sealed class AgentHub(ConnectionRegistry registry, IApiKeyService apiKeys, TimeProvider timeProvider, ILogger<AgentHub> logger) : Hub, IAgentHubServer
+internal sealed class AgentHub(ConnectionRegistry registry, IApiKeyService apiKeys, CloudTelemetry telemetry, TimeProvider timeProvider, ILogger<AgentHub> logger) : Hub, IAgentHubServer
 {
     public override async Task OnConnectedAsync()
     {
@@ -45,14 +46,18 @@ internal sealed class AgentHub(ConnectionRegistry registry, IApiKeyService apiKe
         var (companyId, _) = Identify();
         if (!IsSupported(catalog.ProtocolVersion))
         {
-            return Task.FromResult(new RegisterResult(
+            var unsupported = new RegisterResult(
                 false,
                 [],
                 [],
-                $"Unsupported protocol version '{catalog.ProtocolVersion}'. This cloud speaks protocol major {ProtocolVersion.Major}."));
+                $"Unsupported protocol version '{catalog.ProtocolVersion}'. This cloud speaks protocol major {ProtocolVersion.Major}.",
+                RegisterCodes.UnsupportedProtocol);
+            telemetry.RecordRegistration(unsupported);
+            return Task.FromResult(unsupported);
         }
 
         var result = registry.Register(companyId, Context.ConnectionId, catalog);
+        telemetry.RecordRegistration(result);
         foreach (var rejected in result.RejectedServers)
         {
             logger.LogWarning("Server '{Server}' of company {CompanyId} rejected: {Reason}", rejected.ServerName, companyId, rejected.Reason);

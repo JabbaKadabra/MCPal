@@ -20,6 +20,10 @@ internal sealed class SpaHostingTests
     [TestCase("/")]
     [TestCase("/keys")]
     [TestCase("/connections")]
+    [TestCase("/audit")]
+    [TestCase("/forgot-password")]
+    [TestCase("/reset-password?email=a%40b.c&token=x")]
+    [TestCase("/confirm-email?userId=1&token=x")]
     [TestCase("/oauth/authorize?client_id=x&redirect_uri=y")]
     public async Task Get_ClientSideRoute_ServesIndexHtml(string path)
     {
@@ -46,6 +50,9 @@ internal sealed class SpaHostingTests
     [TestCase("/oauth/register")]
     [TestCase("/.well-known/unknown")]
     [TestCase("/hub/other")]
+    [TestCase("/health/ready")]
+    [TestCase("/health/live")]
+    [TestCase("/health/unknown")]
     public async Task Get_MachineEndpoint_IsNeverServedTheSpa(string path)
     {
         var webRoot = CreateWebRoot();

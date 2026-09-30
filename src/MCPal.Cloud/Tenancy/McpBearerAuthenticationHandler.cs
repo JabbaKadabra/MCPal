@@ -75,6 +75,7 @@ internal sealed class McpBearerAuthenticationHandler(
                 new Claim(McpalClaims.CompanyId, validated.CompanyId.ToString()),
                 new Claim(McpalClaims.ApiKeyId, validated.ApiKeyId.ToString()),
                 new Claim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey),
+                .. McpalClaims.RestrictionClaims(validated.Purpose, validated.AllowedServers),
             ];
     }
 
@@ -90,10 +91,17 @@ internal sealed class McpBearerAuthenticationHandler(
         {
             new(McpalClaims.CompanyId, validated.CompanyId.ToString()),
             new(McpalClaims.AuthKind, McpalClaims.AuthKindOAuth),
+            new(McpalClaims.OAuthClientId, validated.ClientId),
         };
         if (validated.ApiKeyId is { } apiKeyId)
         {
             claims.Add(new Claim(McpalClaims.ApiKeyId, apiKeyId.ToString()));
+        }
+
+        // A token inherits the restrictions of the key it was issued from. Tokens from a portal session have no key.
+        if (validated.Purpose is { } purpose)
+        {
+            claims.AddRange(McpalClaims.RestrictionClaims(purpose, validated.AllowedServers ?? []));
         }
 
         return [.. claims];

@@ -38,4 +38,13 @@ internal sealed class AgentCommandLineTests
         parsed.Verb.Should().Be("start");
         parsed.IsKnownVerb.Should().BeFalse();
     }
+
+    [Test]
+    public void Parse_StatusVerb_IsKnown()
+    {
+        var parsed = AgentCommandLine.Parse(["status", "--config", "x.json"]);
+
+        parsed.Verb.Should().Be("status");
+        parsed.IsKnownVerb.Should().BeTrue();
+    }
 }

@@ -28,6 +28,32 @@ describe('api client', () => {
     expect(posts.every((c) => c.headers['X-CSRF-TOKEN'] === 'tok-1')).toBe(true);
   });
 
+  it('sends purpose, allowed servers and expiry when creating a key', async () => {
+    const calls = mockFetch((call) => (call.url === '/api/portal/csrf' ? { body: { token: 't' } } : { status: 201, body: {} }));
+
+    await api.createKey('team', { purpose: 'client', allowedServers: ['jira'], expiresAt: '2030-01-01T00:00:00.000Z' });
+
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      name: 'team',
+      purpose: 'client',
+      allowedServers: ['jira'],
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    });
+  });
+
+  it('fetches a new token after accepting an invitation because that signs the new user in', async () => {
+    let tokenNumber = 0;
+    const calls = mockFetch((call) => {
+      if (call.url === '/api/portal/csrf') return { body: { token: `tok-${++tokenNumber}` } };
+      return { status: 201, body: {} };
+    });
+
+    await api.acceptInvitation('invitation', 'a-long-password');
+    await api.createKey('k');
+
+    expect(calls.find((c) => c.url === '/api/portal/keys')?.headers['X-CSRF-TOKEN']).toBe('tok-2');
+  });
+
   it('does not send an anti-forgery header on GET calls', async () => {
     const calls = mockFetch(() => ({ body: [] }));
 

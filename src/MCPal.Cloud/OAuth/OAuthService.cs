@@ -226,7 +226,12 @@ internal sealed class OAuthService(
             .Where(t => t.Hash == hash && t.Kind == OAuthTokenKind.Access && !t.Revoked && t.ExpiresAt > now)
             .Where(t => db.Companies.Any(c => c.Id == t.CompanyId && !c.Disabled))
             .Where(t => t.ApiKeyId == null || activeKeys.Any(k => k.Id == t.ApiKeyId && k.CompanyId == t.CompanyId))
-            .Select(t => new ValidatedAccessToken(t.CompanyId, t.ApiKeyId))
+            .Select(t => new ValidatedAccessToken(
+                t.CompanyId,
+                t.ApiKeyId,
+                t.ClientId,
+                db.ApiKeys.Where(k => k.Id == t.ApiKeyId).Select(k => (ApiKeyPurpose?)k.Purpose).FirstOrDefault(),
+                db.ApiKeys.Where(k => k.Id == t.ApiKeyId).Select(k => k.AllowedServers).FirstOrDefault()))
             .FirstOrDefaultAsync(cancellationToken);
         return token;
     }

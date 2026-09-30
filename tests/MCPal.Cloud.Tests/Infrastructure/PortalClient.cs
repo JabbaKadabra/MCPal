@@ -25,7 +25,7 @@ internal sealed class PortalClient : IDisposable
         var response = await http.SendAsync(request, cancellationToken);
 
         // Anti-forgery tokens are bound to the signed-in user, so they must be fetched again after the identity changed.
-        if (url.StartsWith("/api/portal/auth/", StringComparison.Ordinal))
+        if (url.StartsWith("/api/portal/auth/", StringComparison.Ordinal) || url == "/api/portal/invitations/accept")
         {
             csrfToken = null;
         }

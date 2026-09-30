@@ -1,12 +1,16 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
+using MCPal.Cloud.Audit;
+using MCPal.Cloud.Diagnostics;
 using MCPal.Cloud.Mcp;
 using MCPal.Cloud.OAuth;
+using MCPal.Cloud.Portal;
 using MCPal.Cloud.Storage;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MCPal.Cloud;
@@ -29,6 +33,7 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddMetrics();
         services.AddOptions<McpalOptions>()
             .BindConfiguration(McpalOptions.SectionName)
             .ValidateDataAnnotations()
@@ -45,7 +50,19 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
 
         builder.Populate(services);
 
+        builder.RegisterType<LogEmailSender>().AsSelf().SingleInstance();
+        builder.RegisterType<SmtpEmailSender>().AsSelf().SingleInstance();
+        builder.Register<IEmailSender>(context =>
+                string.IsNullOrWhiteSpace(context.Resolve<IOptions<McpalOptions>>().Value.Smtp.Host)
+                    ? context.Resolve<LogEmailSender>()
+                    : context.Resolve<SmtpEmailSender>())
+            .SingleInstance();
+        builder.RegisterType<AccountMailer>().AsSelf().InstancePerLifetimeScope();
+        builder.RegisterType<TeamService>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<ConnectionRegistry>().AsSelf().SingleInstance();
+        builder.RegisterType<CloudTelemetry>().AsSelf().SingleInstance();
+        builder.RegisterType<AuditWriter>().AsSelf().As<IAuditSink>().SingleInstance();
+        builder.RegisterType<AuditRetention>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<TunnelTerminator>().As<IApiKeyRevocationListener>().SingleInstance();
         builder.RegisterType<TunnelSweeper>().AsSelf().InstancePerLifetimeScope();
         if (registerWebServices)
@@ -53,6 +70,8 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
             builder.RegisterType<DatabaseMigrator>().As<IHostedService>().SingleInstance();
             builder.RegisterType<OAuthCleanupService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<TunnelSweepService>().As<IHostedService>().SingleInstance();
+            builder.Register(context => context.Resolve<AuditWriter>()).As<IHostedService>().SingleInstance();
+            builder.RegisterType<AuditCleanupService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<CallRelay>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<TenantToolHandlers>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<HubAgentInvoker>().As<IAgentInvoker>().SingleInstance();

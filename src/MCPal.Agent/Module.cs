@@ -1,6 +1,7 @@
 using Autofac;
 using MCPal.Agent.Config;
 using MCPal.Agent.Local;
+using MCPal.Agent.Status;
 using MCPal.Agent.Tunnel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -35,6 +36,9 @@ public sealed class AgentModule(bool runTunnel = true) : Module
             })
             .AsSelf()
             .SingleInstance();
+        builder.RegisterInstance(AgentInfo.Current).AsSelf().IfNotRegistered(typeof(AgentInfo));
+        builder.RegisterType<AgentTelemetry>().AsSelf().SingleInstance();
+        builder.RegisterType<AgentStatusTracker>().AsSelf().SingleInstance();
         builder.RegisterType<LocalServerManager>().As<ILocalServerManager>().AsSelf().SingleInstance();
         builder.RegisterType<DefaultTunnelTransportConfigurator>().As<ITunnelTransportConfigurator>().SingleInstance();
         if (runTunnel)

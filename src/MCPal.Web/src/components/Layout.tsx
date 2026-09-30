@@ -24,6 +24,8 @@ export function Layout() {
         <nav aria-label="Main">
           <NavLink to="/keys">{t('nav.keys')}</NavLink>
           <NavLink to="/connections">{t('nav.connections')}</NavLink>
+          <NavLink to="/audit">{t('nav.audit')}</NavLink>
+          {me.data?.role === 'owner' && <NavLink to="/users">{t('nav.users')}</NavLink>}
           <NavLink to="/connect">{t('nav.connect')}</NavLink>
         </nav>
         <span className="spacer" />

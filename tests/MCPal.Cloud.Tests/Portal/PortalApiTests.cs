@@ -96,6 +96,8 @@ internal sealed class PortalApiTests
         await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
         using var registrar = new PortalClient(factory);
         (await registrar.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
+        var confirmation = factory.Emails.To("admin@acme.example").Single();
+        (await registrar.PostAsync("/api/portal/auth/confirm-email", new { userId = confirmation.QueryValue("userId"), token = confirmation.QueryValue("token") }, Ct)).Dispose();
         using var browser = new PortalClient(factory);
 
         using var wrong = await browser.PostAsync("/api/portal/auth/login", new { email = "admin@acme.example", password = "wrong-password-1" }, Ct);
@@ -200,6 +202,32 @@ internal sealed class PortalApiTests
         list[0].GetProperty("servers")[0].GetProperty("tools").GetArrayLength().Should().Be(2);
         list[0].GetProperty("rejectedTools").GetArrayLength().Should().Be(0);
         (await PortalClient.JsonAsync(globexConnections, Ct)).GetArrayLength().Should().Be(0);
+    }
+
+    [TestCase("1.2.0", true)]
+    [TestCase("1.0.0", false)]
+    [TestCase(null, false)]
+    public async Task Connections_AgentVersion_IsShownAndUpdateFlagFollowsLatestAgentVersion(string? latest, bool updateAvailable)
+    {
+        var settings = new Dictionary<string, string?>();
+        if (latest is not null)
+        {
+            settings["Mcpal:LatestAgentVersion"] = latest;
+        }
+
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct, settings: settings);
+        using var portal = new PortalClient(factory);
+        (await portal.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
+        using var created = await portal.PostAsync("/api/portal/keys", new { name = "hq" }, Ct);
+        var rawKey = (await PortalClient.JsonAsync(created, Ct)).GetProperty("key").GetString() ?? string.Empty;
+        await using var agent = await FakeAgent.StartAsync(factory, rawKey, FakeAgent.CatalogWith("kb", "search"), _ => Task.FromResult(FakeAgent.Text("x")), Ct);
+
+        using var connections = await portal.GetAsync("/api/portal/connections", Ct);
+
+        var connection = (await PortalClient.JsonAsync(connections, Ct))[0];
+        connection.GetProperty("agentVersion").GetString().Should().Be("1.0");
+        connection.GetProperty("updateAvailable").GetBoolean().Should().Be(updateAvailable);
+        connection.GetProperty("latestAgentVersion").GetString().Should().Be(latest);
     }
 
     [Test]

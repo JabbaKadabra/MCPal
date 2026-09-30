@@ -60,7 +60,11 @@ internal sealed class ApiKeyServiceTests : CloudTestBase
 
         var validated = await service.ValidateAsync(created.RawKey, Ct);
 
-        validated.Should().Be(new ValidatedKey(company.Id, created.Id));
+        validated.Should().NotBeNull();
+        validated.CompanyId.Should().Be(company.Id);
+        validated.ApiKeyId.Should().Be(created.Id);
+        validated.Purpose.Should().Be(ApiKeyPurpose.Any);
+        validated.AllowedServers.Should().BeEmpty();
     }
 
     [TestCase("")]
@@ -175,5 +179,45 @@ internal sealed class ApiKeyServiceTests : CloudTestBase
         await service.RevokeAsync(company.Id, created.Id, Ct);
 
         await listener.Received(1).OnRevokedAsync(company.Id, created.Id, Ct);
+    }
+
+    [Test]
+    public async Task CreateAsync_WithPurposeAndServers_PersistsThemAndValidateReturnsThem()
+    {
+        await using var scope = await GetServicesAsync();
+        var company = await scope.Resolve<ICompanyService>().CreateAsync("Acme", Ct);
+        var service = scope.Resolve<IApiKeyService>();
+
+        var created = await service.CreateAsync(company.Id, "team", null, ApiKeyPurpose.Client, ["jira", "wiki"], Ct);
+
+        var stored = await scope.Resolve<MCPalDbContext>().ApiKeys.AsNoTracking().SingleAsync(k => k.Id == created.Id, Ct);
+        stored.Purpose.Should().Be(ApiKeyPurpose.Client);
+        stored.AllowedServers.Should().Equal("jira", "wiki");
+        var validated = await service.ValidateAsync(created.RawKey, Ct);
+        validated?.Purpose.Should().Be(ApiKeyPurpose.Client);
+        validated?.AllowedServers.Should().Equal("jira", "wiki");
+    }
+
+    [Test]
+    public async Task CreateAsync_DuplicateServersDifferingInCase_AreStoredOnce()
+    {
+        await using var scope = await GetServicesAsync();
+        var company = await scope.Resolve<ICompanyService>().CreateAsync("Acme", Ct);
+
+        var created = await scope.Resolve<IApiKeyService>().CreateAsync(company.Id, "team", null, ApiKeyPurpose.Client, ["jira", "JIRA", " jira "], Ct);
+
+        var stored = await scope.Resolve<MCPalDbContext>().ApiKeys.AsNoTracking().SingleAsync(k => k.Id == created.Id, Ct);
+        stored.AllowedServers.Should().Equal("jira");
+    }
+
+    [Test]
+    public async Task CreateAsync_AgentKeyWithServers_Throws()
+    {
+        await using var scope = await GetServicesAsync();
+        var company = await scope.Resolve<ICompanyService>().CreateAsync("Acme", Ct);
+
+        var act = async () => await scope.Resolve<IApiKeyService>().CreateAsync(company.Id, "agent", null, ApiKeyPurpose.Agent, ["jira"], Ct);
+
+        await act.Should().ThrowAsync<ArgumentException>();
     }
 }

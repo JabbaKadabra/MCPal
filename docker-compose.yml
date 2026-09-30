@@ -9,11 +9,30 @@ services:
       ConnectionStrings__Mcpal: "Host=postgres;Database=mcpal;Username=mcpal;Password=mcpal"
       Mcpal__PublicUrl: "http://localhost:8080"
       Mcpal__DataProtectionPath: "/data/keys"
+      # Empty = no export. With the otel profile: OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire:18889 docker compose --profile otel up
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     volumes:
       - cloud-keys:/data/keys
+    healthcheck:
+      # The runtime image has neither curl nor wget; bash can open the TCP connection itself.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /health/ready HTTP/1.0\\r\\n\\r\\n\" >&3 && head -n 1 <&3 | grep -q \" 200 \"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Local telemetry dashboard (traces and metrics), only with `--profile otel`: http://localhost:18888
+  aspire:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.5
+    profiles: ["otel"]
+    ports:
+      - "18888:18888"
+      - "4317:18889"
+    environment:
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
 
   postgres:
     image: postgres:17
