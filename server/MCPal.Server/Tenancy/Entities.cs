@@ -56,7 +56,7 @@ internal sealed class ApiKey
     public string? CreatedByUserId { get; set; }
 }
 
-/// <summary>Owners manage users and every key; members see connections, the audit log and connect info, and create Claude keys for themselves.</summary>
+/// <summary>Owners manage users, groups, bridge keys and see the audit log; members use their allowed tools, see connections and create personal access tokens for themselves.</summary>
 internal enum PortalRole
 {
     Member = 0,

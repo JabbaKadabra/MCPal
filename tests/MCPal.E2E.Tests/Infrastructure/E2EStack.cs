@@ -3,6 +3,7 @@ using Autofac.Extensions.DependencyInjection;
 using MCPal.Bridge;
 using MCPal.Bridge.Config;
 using MCPal.Bridge.Tunnel;
+using MCPal.Server.Access;
 using MCPal.Server.Portal;
 using MCPal.Server.Tenancy;
 using Microsoft.AspNetCore.Hosting;
@@ -76,6 +77,9 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Server.ServerModule
         var user = new PortalUser { UserName = email, Email = email, EmailConfirmed = true, CompanyId = companyId, Role = role };
         var created = await services.GetRequiredService<UserManager<PortalUser>>().CreateAsync(user, "correct-horse-battery");
         created.Succeeded.Should().BeTrue(string.Join(", ", created.Errors.Select(e => e.Description)));
+
+        // Users created behind the portal's back: the cached access policy of the company does not know them yet.
+        services.GetRequiredService<AccessPolicyCache>().Invalidate(companyId);
         return user;
     }
 
@@ -87,11 +91,11 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Server.ServerModule
     }
 
     /// <summary>Starts a real bridge (config, local server manager, tunnel client) that talks to this server.</summary>
-    public async Task<IHost> StartBridgeAsync(SeededCompany company, string serverName, string bridgeName, CancellationToken cancellationToken, TimeProvider? timeProvider = null, string? statusFile = null, string? protocolVersion = null, ILoggerProvider? logs = null)
+    public async Task<IHost> StartBridgeAsync(SeededCompany company, string serverName, string bridgeName, CancellationToken cancellationToken, TimeProvider? timeProvider = null, string? statusFile = null, string? protocolVersion = null, ILoggerProvider? logs = null, string? jwksFile = null, IReadOnlyDictionary<string, LocalServerConfig>? servers = null)
     {
         var config = new BridgeConfig(
             new McpalConfig(Server.BaseAddress.ToString().TrimEnd('/'), company.BridgeKey, bridgeName),
-            new Dictionary<string, LocalServerConfig>
+            servers ?? new Dictionary<string, LocalServerConfig>
             {
                 [serverName] = new(
                     "dotnet",
@@ -103,6 +107,7 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Server.ServerModule
             BridgeConfig.DefaultCallTimeoutSeconds)
         {
             StatusFile = statusFile,
+            JwksFile = jwksFile,
         };
         var builder = Host.CreateApplicationBuilder();
         if (logs is not null)
@@ -122,6 +127,9 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Server.ServerModule
 
             container.RegisterInstance(config).AsSelf();
             container.RegisterInstance(new InMemoryTransport(this)).As<ITunnelTransportConfigurator>();
+
+            // The JWKS file writer fetches through the in-memory server too.
+            container.RegisterInstance(Server.CreateHandler()).As<HttpMessageHandler>();
             if (timeProvider is not null)
             {
                 container.RegisterInstance(timeProvider).As<TimeProvider>();

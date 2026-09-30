@@ -4,6 +4,7 @@
     "apiKey": "mcpal_xxxxxxxx_replace-me (or set MCPAL_API_KEY)",
     "bridgeName": "hq-01"
   },
+  "jwksFile": "/etc/mcpal/jwks.json",
   "mcpServers": {
     "kb": {
       "command": "npx",
@@ -12,7 +13,12 @@
     },
     "wiki": {
       "url": "http://intranet:8080/mcp",
-      "headers": { "Authorization": "Bearer ${WIKI_TOKEN}" }
+      "userTokenHeader": "Authorization"
+    },
+    "thirdparty": {
+      "url": "http://intranet:8081/mcp",
+      "headers": { "Authorization": "Bearer ${THIRDPARTY_TOKEN}" },
+      "userContext": false
     }
   }
 }

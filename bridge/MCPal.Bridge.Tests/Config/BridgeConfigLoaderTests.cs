@@ -257,4 +257,62 @@ internal sealed class BridgeConfigLoaderTests
     {
         BridgeConfigLoader.Parse("""{ "mcpServers": {} }""", NoEnvironment, requireMcpal: false).StatusFile.Should().BeNull();
     }
+
+    [Test]
+    public void Parse_UserContextSettings_AreReadPerServer()
+    {
+        const string json = """
+            { "jwksFile": "/etc/mcpal/jwks.json", "mcpServers": {
+                "wiki": { "url": "http://intranet:8080/mcp", "userTokenHeader": "Authorization" },
+                "kb": { "command": "kb" },
+                "third": { "url": "http://t/mcp", "headers": { "Authorization": "Bearer x" }, "userContext": false } } }
+            """;
+
+        var config = BridgeConfigLoader.Parse(json, NoEnvironment, requireMcpal: false);
+
+        config.JwksFile.Should().Be("/etc/mcpal/jwks.json");
+        config.McpServers["wiki"].UserContext.Should().BeTrue();
+        config.McpServers["wiki"].UserTokenHeader.Should().Be("Authorization");
+        config.McpServers["kb"].UserContext.Should().BeTrue();
+        config.McpServers["kb"].UserTokenHeader.Should().BeNull();
+        config.McpServers["third"].UserContext.Should().BeFalse();
+    }
+
+    [Test]
+    public void Parse_NoJwksFile_IsNull()
+    {
+        BridgeConfigLoader.Parse("""{ "mcpServers": {} }""", NoEnvironment, requireMcpal: false).JwksFile.Should().BeNull();
+    }
+
+    [Test]
+    public void Parse_JwksFile_IsExpanded()
+    {
+        var environment = new Dictionary<string, string?> { ["CONF"] = "/etc/mcpal" };
+
+        var config = BridgeConfigLoader.Parse("""{ "jwksFile": "${CONF}/jwks.json", "mcpServers": {} }""", environment, requireMcpal: false);
+
+        config.JwksFile.Should().Be("/etc/mcpal/jwks.json");
+    }
+
+    [TestCase("""{ "mcpServers": { "kb": { "command": "x", "userTokenHeader": "Authorization" } } }""", "only for HTTP servers")]
+    [TestCase("""{ "mcpServers": { "kb": { "url": "http://x/mcp", "userTokenHeader": "Authorization", "headers": { "authorization": "Bearer y" } } } }""", "both 'headers' and 'userTokenHeader'")]
+    [TestCase("""{ "mcpServers": { "kb": { "url": "http://x/mcp", "userTokenHeader": "X-User", "headers": { "X-User": "y" } } } }""", "both 'headers' and 'userTokenHeader'")]
+    [TestCase("""{ "mcpServers": { "kb": { "url": "http://x/mcp", "userTokenHeader": "Bad Header" } } }""", "not a valid HTTP header name")]
+    [TestCase("""{ "mcpServers": { "kb": { "url": "http://x/mcp", "userTokenHeader": "X:User" } } }""", "not a valid HTTP header name")]
+    [TestCase("""{ "mcpServers": { "kb": { "url": "http://x/mcp", "userTokenHeader": "Authorization", "userContext": false } } }""", "no effect while 'userContext' is false")]
+    public void Parse_InvalidUserTokenHeader_ThrowsNamingTheServer(string json, string reason)
+    {
+        var act = () => BridgeConfigLoader.Parse(json, NoEnvironment, requireMcpal: false);
+
+        act.Should().Throw<BridgeConfigException>().WithMessage("Server 'kb'*").WithMessage("*" + reason + "*");
+    }
+
+    [Test]
+    public void Parse_BlankUserTokenHeader_MeansNone()
+    {
+        const string json = """{ "mcpServers": { "kb": { "command": "x", "userTokenHeader": "  " } } }""";
+
+        BridgeConfigLoader.Parse(json, NoEnvironment, requireMcpal: false).McpServers["kb"].UserTokenHeader.Should().BeNull();
+    }
 }
+

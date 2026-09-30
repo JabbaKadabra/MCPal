@@ -15,9 +15,20 @@ internal sealed class LocalServer(string name, LocalServerConfig config, ILogger
     private readonly AsyncLock startLock = new();
     private readonly ILogger logger = loggerFactory.CreateLogger($"LocalServer.{name}");
     private readonly ToolFilter filter = new(config.IncludeTools, config.ExcludeTools);
+    private readonly UserTokenScope? tokenScope = config.UserTokenHeader is null ? null : new UserTokenScope();
     private McpClient? client;
 
     public string Name => name;
+
+    /// <summary>Whether this server gets the caller of each tool call (<c>userContext</c> in the config).</summary>
+    public bool SendsUserContext => config.UserContext;
+
+    /// <summary>
+    /// Makes <paramref name="token"/> the caller token of requests sent on this async flow until the scope ends. Only tool calls
+    /// enter it, and only after the client exists, so connection setup and background streams never carry a user's token.
+    /// Without a configured header it does nothing.
+    /// </summary>
+    public IDisposable EnterUserScope(string? token) => tokenScope?.Enter(token) ?? NoScope.Instance;
 
     /// <summary>Names of tools the last listing hid because of <c>includeTools</c> / <c>excludeTools</c>.</summary>
     public IReadOnlyList<string> HiddenTools { get; private set; } = [];
@@ -96,12 +107,30 @@ internal sealed class LocalServer(string name, LocalServerConfig config, ILogger
             });
         }
 
-        return new HttpClientTransport(new HttpClientTransportOptions
+        var options = new HttpClientTransportOptions
         {
             Name = name,
             Endpoint = new Uri(config.Url ?? throw new InvalidOperationException("Server has neither command nor url.")),
             AdditionalHeaders = config.Headers.ToDictionary(pair => pair.Key, pair => pair.Value),
-        });
+        };
+        if (tokenScope is null || config.UserTokenHeader is not { } header)
+        {
+            return new HttpClientTransport(options);
+        }
+
+        // Own HttpClient: its handler adds the caller token to the requests of a tool call and to no others.
+        // No client timeout: the bridge limits every call itself (callTimeoutSeconds), and streams stay open on purpose.
+        var http = new HttpClient(new UserTokenHeaderHandler(tokenScope, header) { InnerHandler = new HttpClientHandler() }) { Timeout = Timeout.InfiniteTimeSpan };
+        return new HttpClientTransport(options, http, loggerFactory, ownsHttpClient: true);
+    }
+
+    private sealed class NoScope : IDisposable
+    {
+        public static readonly NoScope Instance = new();
+
+        public void Dispose()
+        {
+        }
     }
 
     private async ValueTask DisposeClientAsync()

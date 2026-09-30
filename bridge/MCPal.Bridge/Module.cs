@@ -44,6 +44,7 @@ public sealed class BridgeModule(bool runTunnel = true) : Module
         builder.RegisterType<DefaultTunnelTransportConfigurator>().As<ITunnelTransportConfigurator>().SingleInstance();
         if (runTunnel)
         {
+            builder.RegisterType<JwksFileWriter>().AsSelf().As<IHostedService>().SingleInstance();
             builder.RegisterType<TunnelClient>().As<IHostedService>().SingleInstance();
         }
     }

@@ -84,12 +84,21 @@ internal sealed class LocalServerManager : ILocalServerManager, IAsyncDisposable
                 ? null
                 : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(request.ArgumentsJson, McpJsonUtilities.DefaultOptions);
             client = await server.GetClientAsync(timeout.Token);
-            var result = await client.SendRequestAsync<CallToolRequestParams, CallToolResult>(
-                RequestMethods.ToolsCall,
-                new CallToolRequestParams { Name = request.ToolName, Arguments = arguments },
-                McpJsonUtilities.DefaultOptions,
-                requestId,
-                timeout.Token);
+
+            // The caller goes to servers that want it. Claude's own _meta is never forwarded; the key is removed and set here only.
+            var caller = server.SendsUserContext ? request.User : null;
+            var parameters = new CallToolRequestParams { Name = request.ToolName, Arguments = arguments, Meta = UserContextMeta.Apply(null, caller) };
+            CallToolResult result;
+            using (server.EnterUserScope(caller?.Token))
+            {
+                result = await client.SendRequestAsync<CallToolRequestParams, CallToolResult>(
+                    RequestMethods.ToolsCall,
+                    parameters,
+                    McpJsonUtilities.DefaultOptions,
+                    requestId,
+                    timeout.Token);
+            }
+
             var response = new CallToolResponse(
                 result.IsError == true,
                 JsonSerializer.Serialize(result.Content, McpJsonUtilities.DefaultOptions),

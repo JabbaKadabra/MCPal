@@ -44,6 +44,10 @@ internal sealed class TestTools
         Meta = new System.Text.Json.Nodes.JsonObject { ["source"] = "station-7" },
     };
 
+    [McpServerTool(Name = "whoami"), Description("Returns the caller the MCPal bridge put into _meta (eu.nordstein.mcp/user) as JSON, or 'none'.")]
+    public static string Whoami(RequestContext<CallToolRequestParams> context) =>
+        context.Params?.Meta?["eu.nordstein.mcp/user"]?.ToJsonString() ?? "none";
+
     [McpServerTool(Name = "fail"), Description("Always fails.")]
     public static string Fail() => throw new InvalidOperationException("boom from test server");
 

@@ -70,9 +70,11 @@ internal static class BridgeConfigLoader
         }
 
         var statusFile = string.IsNullOrWhiteSpace(raw.StatusFile) ? null : EnvironmentExpander.Expand(raw.StatusFile, environment, "Config 'statusFile'");
+        var jwksFile = string.IsNullOrWhiteSpace(raw.JwksFile) ? null : EnvironmentExpander.Expand(raw.JwksFile, environment, "Config 'jwksFile'");
         return new BridgeConfig(mcpal, servers, raw.CallTimeoutSeconds is > 0 ? raw.CallTimeoutSeconds.Value : BridgeConfig.DefaultCallTimeoutSeconds)
         {
             StatusFile = statusFile,
+            JwksFile = jwksFile,
         };
     }
 
@@ -135,6 +137,10 @@ internal static class BridgeConfigLoader
             throw new BridgeConfigException($"Server '{name}' needs 'url' to be an absolute http(s) URL.");
         }
 
+        var userContext = raw.UserContext ?? true;
+        var userTokenHeader = string.IsNullOrWhiteSpace(raw.UserTokenHeader) ? null : raw.UserTokenHeader.Trim();
+        ValidateUserTokenHeader(name, userTokenHeader, hasCommand, userContext, raw.Headers);
+
         return new LocalServerConfig(
             hasCommand ? raw.Command : null,
             raw.Args ?? [],
@@ -144,8 +150,42 @@ internal static class BridgeConfigLoader
         {
             IncludeTools = Patterns(name, "includeTools", raw.IncludeTools),
             ExcludeTools = Patterns(name, "excludeTools", raw.ExcludeTools),
+            UserContext = userContext,
+            UserTokenHeader = userTokenHeader,
         };
     }
+
+    private static void ValidateUserTokenHeader(string server, string? header, bool stdio, bool userContext, Dictionary<string, string>? staticHeaders)
+    {
+        if (header is null)
+        {
+            return;
+        }
+
+        if (stdio)
+        {
+            throw new BridgeConfigException($"Server '{server}': 'userTokenHeader' is only for HTTP servers ('url'). A stdio server reads the caller from the request's _meta.");
+        }
+
+        if (!userContext)
+        {
+            throw new BridgeConfigException($"Server '{server}': 'userTokenHeader' has no effect while 'userContext' is false.");
+        }
+
+        if (!IsHeaderName(header))
+        {
+            throw new BridgeConfigException($"Server '{server}': 'userTokenHeader' '{header}' is not a valid HTTP header name.");
+        }
+
+        if (staticHeaders?.Keys.Any(key => string.Equals(key, header, StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            throw new BridgeConfigException($"Server '{server}': the header '{header}' is set in both 'headers' and 'userTokenHeader'. Remove it from 'headers'.");
+        }
+    }
+
+    /// <summary>An HTTP header name is a token (RFC 9110): letters, digits and <c>!#$%&amp;'*+-.^_`|~</c>.</summary>
+    private static bool IsHeaderName(string value) =>
+        value.Length > 0 && value.All(c => char.IsAsciiLetterOrDigit(c) || "!#$%&'*+-.^_`|~".Contains(c, StringComparison.Ordinal));
 
     private static List<string> Patterns(string server, string field, List<string>? patterns)
     {
@@ -173,6 +213,8 @@ internal static class BridgeConfigLoader
             Headers = Map(raw.Headers),
             IncludeTools = raw.IncludeTools,
             ExcludeTools = raw.ExcludeTools,
+            UserContext = raw.UserContext,
+            UserTokenHeader = raw.UserTokenHeader,
         };
     }
 
@@ -185,6 +227,8 @@ internal static class BridgeConfigLoader
         public int? CallTimeoutSeconds { get; set; }
 
         public string? StatusFile { get; set; }
+
+        public string? JwksFile { get; set; }
     }
 
     private sealed class RawMcpal
@@ -211,5 +255,9 @@ internal static class BridgeConfigLoader
         public List<string>? IncludeTools { get; set; }
 
         public List<string>? ExcludeTools { get; set; }
+
+        public bool? UserContext { get; set; }
+
+        public string? UserTokenHeader { get; set; }
     }
 }

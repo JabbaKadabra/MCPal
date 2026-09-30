@@ -284,4 +284,56 @@ internal sealed class LocalServerManagerTests : BridgeTestBase
         responses.Should().OnlyContain(r => !r.IsError);
         started.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(3000));
     }
+
+    private static readonly UserContext Anna = new("jwt.value", "user-anna", "anna@acme.example", "Anna", ["Everyone", "hr"], Guid.Parse("7f3c6a1e-5b7d-4f0e-9a51-0c2d2f6f7a10"), "acme");
+
+    [Test]
+    public async Task CallToolAsync_WithUser_PassesTheCallerInMetaToTheLocalServer()
+    {
+        var scope = GetServices(ConfigWith(new() { ["test"] = TestServer() }));
+
+        var response = await scope.Resolve<ILocalServerManager>().CallToolAsync(Request("test", "whoami") with { User = Anna }, Ct);
+
+        using var meta = JsonDocument.Parse(TextOf(response));
+        meta.RootElement.GetProperty("sub").GetString().Should().Be("user-anna");
+        meta.RootElement.GetProperty("token").GetString().Should().Be("jwt.value");
+        meta.RootElement.GetProperty("email").GetString().Should().Be("anna@acme.example");
+        meta.RootElement.GetProperty("groups").EnumerateArray().Select(g => g.GetString()).Should().Equal("Everyone", "hr");
+        meta.RootElement.GetProperty("company").GetString().Should().Be("acme");
+    }
+
+    [Test]
+    public async Task CallToolAsync_WithoutUser_SendsNoCaller()
+    {
+        var scope = GetServices(ConfigWith(new() { ["test"] = TestServer() }));
+
+        var response = await scope.Resolve<ILocalServerManager>().CallToolAsync(Request("test", "whoami"), Ct);
+
+        TextOf(response).Should().Be("none");
+    }
+
+    [Test]
+    public async Task CallToolAsync_ServerWithUserContextOff_SendsNoCallerEvenWhenTheRequestHasOne()
+    {
+        var scope = GetServices(ConfigWith(new() { ["test"] = TestServer() with { UserContext = false } }));
+
+        var response = await scope.Resolve<ILocalServerManager>().CallToolAsync(Request("test", "whoami") with { User = Anna }, Ct);
+
+        TextOf(response).Should().Be("none");
+    }
+
+    [Test]
+    public async Task CallToolAsync_TwoUsersInParallel_EachCallSeesItsOwnCaller()
+    {
+        var scope = GetServices(ConfigWith(new() { ["test"] = TestServer() }));
+        var manager = scope.Resolve<ILocalServerManager>();
+        var ben = Anna with { Token = "jwt.ben", UserId = "user-ben", Email = "ben@acme.example" };
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, 6).Select(i => manager.CallToolAsync(Request("test", "whoami") with { User = i % 2 == 0 ? Anna : ben }, Ct)));
+
+        var subs = responses.Select(r => JsonDocument.Parse(TextOf(r)).RootElement.GetProperty("sub").GetString()).ToList();
+        subs.Should().Equal("user-anna", "user-ben", "user-anna", "user-ben", "user-anna", "user-ben");
+    }
 }
+
