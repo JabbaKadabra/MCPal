@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "../MCPal.slnx",
+    "projects": [
+      "server/MCPal.Server/MCPal.Server.csproj",
+      "server/MCPal.Server.Tests/MCPal.Server.Tests.csproj",
+      "shared/MCPal.Contracts/MCPal.Contracts.csproj"
+    ]
+  }
+}

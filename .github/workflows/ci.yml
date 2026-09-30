@@ -28,15 +28,15 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore MCPal.sln
+        run: dotnet restore MCPal.slnx
 
       - name: Build
-        run: dotnet build MCPal.sln --configuration Release --no-restore
+        run: dotnet build MCPal.slnx --configuration Release --no-restore
 
-      # Cloud and E2E tests start PostgreSQL through Testcontainers; the hosted runner provides Docker.
+      # Server and E2E tests start PostgreSQL through Testcontainers; the hosted runner provides Docker.
       - name: Test
         run: >
-          dotnet test MCPal.sln --configuration Release --no-build
+          dotnet test MCPal.slnx --configuration Release --no-build
           --logger trx --results-directory TestResults
 
       - name: Upload test results
@@ -52,7 +52,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: src/MCPal.Web
+        working-directory: server/portal
     steps:
       - uses: actions/checkout@v5
 
@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: src/MCPal.Web/package-lock.json
+          cache-dependency-path: server/portal/package-lock.json
 
       - name: Install
         run: npm ci
@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: src/MCPal.Web
+        working-directory: server/portal
     steps:
       - uses: actions/checkout@v5
 
@@ -85,14 +85,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: src/MCPal.Web/package-lock.json
+          cache-dependency-path: server/portal/package-lock.json
 
-      # The production stack: cloud (with the built SPA) and PostgreSQL.
+      # The production stack: server (with the built SPA) and PostgreSQL.
       - name: Start the stack
         working-directory: .
         run: docker compose up --build -d
 
-      - name: Wait for the cloud to be ready
+      - name: Wait for the MCPal server to be ready
         run: |
           for attempt in $(seq 1 60); do
             if curl --silent --fail http://localhost:8080/health/ready > /dev/null; then
@@ -101,8 +101,8 @@ jobs:
             fi
             sleep 3
           done
-          echo "the cloud did not become ready" >&2
-          docker compose --project-directory ../.. logs cloud
+          echo "the MCPal server did not become ready" >&2
+          docker compose --project-directory ../.. logs server
           exit 1
 
       - name: Install
@@ -113,7 +113,7 @@ jobs:
 
       - name: Test the Linux install script
         working-directory: .
-        run: packaging/linux/test-install.sh
+        run: bridge/packaging/linux/test-install.sh
 
       - name: Run the smoke tests
         run: npx playwright test
@@ -124,13 +124,13 @@ jobs:
         with:
           name: playwright-report
           path: |
-            src/MCPal.Web/playwright-report
-            src/MCPal.Web/test-results
+            server/portal/playwright-report
+            server/portal/test-results
 
-      - name: Show the cloud log
+      - name: Show the MCPal server log
         if: failure()
         working-directory: .
-        run: docker compose logs cloud
+        run: docker compose logs server
 
       - name: Stop the stack
         if: always()

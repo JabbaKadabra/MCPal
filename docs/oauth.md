@@ -25,13 +25,13 @@ A request to `/mcp` without valid credentials gets `401` with
 
 Every key has a purpose, chosen at creation and never changed (revoke and create a new key instead, which keeps the claims of issued tokens simple):
 
-| Purpose | Tunnel (`/hub/agent`) | `/mcp` bearer | OAuth sign-in |
+| Purpose | Tunnel (`/hub/bridge`) | `/mcp` bearer | OAuth sign-in |
 |---------|----------------------|---------------|---------------|
-| `agent` | yes | 403 | refused: `403 key_not_allowed` "This key can only be used by an agent." |
+| `bridge` | yes | 403 | refused: `403 key_not_allowed` "This key can only be used by a bridge." |
 | `client` | 403 | yes | yes |
 | `any` | yes | yes | yes |
 
-Keys created before purposes existed are `any`. A key for Claude (`client` or `any`) can also carry a list of allowed servers (empty = all). Tools of other servers are missing from `tools/list`, and calling one answers exactly like an unknown tool ("not available"), so its existence is not revealed. Server names are compared without case and can be listed before the server is online. Agent keys cannot be restricted, because they open tunnels rather than list tools.
+Keys created before purposes existed are `any`. A key for Claude (`client` or `any`) can also carry a list of allowed servers (empty = all). Tools of other servers are missing from `tools/list`, and calling one answers exactly like an unknown tool ("not available"), so its existence is not revealed. Server names are compared without case and can be listed before the server is online. Bridge keys cannot be restricted, because they open tunnels rather than list tools.
 
 Tokens issued from a key inherit its purpose and allowed servers (the token lookup reads them from the key on every request). A token issued from a portal session has no key and no restrictions.
 

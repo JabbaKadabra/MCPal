@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="docker-compose.yml" />
+  </Folder>
+  <Folder Name="/bridge/">
+    <Project Path="bridge/MCPal.Bridge.Tests/MCPal.Bridge.Tests.csproj" />
+    <Project Path="bridge/MCPal.Bridge/MCPal.Bridge.csproj" />
+  </Folder>
+  <Folder Name="/server/">
+    <Project Path="server/MCPal.Server.Tests/MCPal.Server.Tests.csproj" />
+    <Project Path="server/MCPal.Server/MCPal.Server.csproj" />
+  </Folder>
+  <Folder Name="/shared/">
+    <Project Path="shared/MCPal.Contracts/MCPal.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MCPal.E2E.Tests/MCPal.E2E.Tests.csproj" />
+    <Project Path="tests/MCPal.TestMcpServer/MCPal.TestMcpServer.csproj" />
+  </Folder>
+</Solution>

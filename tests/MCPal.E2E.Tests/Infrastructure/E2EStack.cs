@@ -1,9 +1,9 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
-using MCPal.Agent;
-using MCPal.Agent.Config;
-using MCPal.Agent.Tunnel;
-using MCPal.Cloud.Tenancy;
+using MCPal.Bridge;
+using MCPal.Bridge.Config;
+using MCPal.Bridge.Tunnel;
+using MCPal.Server.Tenancy;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
@@ -17,8 +17,8 @@ using ModelContextProtocol.Client;
 
 namespace MCPal.E2E.Tests;
 
-/// <summary>The cloud host on an isolated database, plus helpers to start in-process agents and MCP clients against it.</summary>
-internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
+/// <summary>The MCPal server host on an isolated database, plus helpers to start in-process bridges and MCP clients against it.</summary>
+internal sealed class E2EStack : WebApplicationFactory<MCPal.Server.ServerModule>
 {
     private readonly string connectionString;
     private readonly Dictionary<string, string?> settings;
@@ -62,11 +62,11 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
         await scope.ServiceProvider.GetRequiredService<IApiKeyService>().RevokeAsync(company.CompanyId, company.ApiKeyId, cancellationToken);
     }
 
-    /// <summary>Starts a real agent (config, local server manager, tunnel client) that talks to this cloud.</summary>
-    public async Task<IHost> StartAgentAsync(SeededCompany company, string serverName, string agentName, CancellationToken cancellationToken, TimeProvider? timeProvider = null, string? statusFile = null, string? protocolVersion = null, ILoggerProvider? logs = null)
+    /// <summary>Starts a real bridge (config, local server manager, tunnel client) that talks to this server.</summary>
+    public async Task<IHost> StartBridgeAsync(SeededCompany company, string serverName, string bridgeName, CancellationToken cancellationToken, TimeProvider? timeProvider = null, string? statusFile = null, string? protocolVersion = null, ILoggerProvider? logs = null)
     {
-        var config = new AgentConfig(
-            new CloudConfig(Server.BaseAddress.ToString().TrimEnd('/'), company.RawKey, agentName),
+        var config = new BridgeConfig(
+            new McpalConfig(Server.BaseAddress.ToString().TrimEnd('/'), company.RawKey, bridgeName),
             new Dictionary<string, LocalServerConfig>
             {
                 [serverName] = new(
@@ -76,24 +76,24 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
                     null,
                     new Dictionary<string, string>()),
             },
-            AgentConfig.DefaultCallTimeoutSeconds)
+            BridgeConfig.DefaultCallTimeoutSeconds)
         {
             StatusFile = statusFile,
         };
         var builder = Host.CreateApplicationBuilder();
         if (logs is not null)
         {
-            // The agent's appsettings.json sets Information as default; a rule for the agent's own categories is more specific.
-            builder.Logging.AddFilter("MCPal.Agent", LogLevel.Debug);
+            // The bridge's appsettings.json sets Information as default; a rule for the bridge's own categories is more specific.
+            builder.Logging.AddFilter("MCPal.Bridge", LogLevel.Debug);
             builder.Logging.AddProvider(logs);
         }
 
         builder.ConfigureContainer(new AutofacServiceProviderFactory(), container =>
         {
-            container.RegisterModule(new AgentModule());
+            container.RegisterModule(new BridgeModule());
             if (protocolVersion is not null)
             {
-                container.RegisterInstance(AgentInfo.Current with { ProtocolVersion = protocolVersion }).AsSelf();
+                container.RegisterInstance(BridgeInfo.Current with { ProtocolVersion = protocolVersion }).AsSelf();
             }
 
             container.RegisterInstance(config).AsSelf();
@@ -108,18 +108,18 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
         return host;
     }
 
-    /// <summary>A client connected straight to the test MCP server, to compare what Claude gets through the cloud with the original.</summary>
+    /// <summary>A client connected straight to the test MCP server, to compare what Claude gets through the MCPal server with the original.</summary>
     public static async Task<McpClient> ConnectLocalServerAsync(CancellationToken cancellationToken)
     {
         var transport = new StdioClientTransport(new StdioClientTransportOptions { Name = "local", Command = "dotnet", Arguments = [TestServerPath] });
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
     }
 
-    /// <summary>A bare tunnel connection with the given key, e.g. to hold a server name like a stale agent connection would.</summary>
+    /// <summary>A bare tunnel connection with the given key, e.g. to hold a server name like a stale bridge connection would.</summary>
     public HubConnection CreateTunnelConnection(string apiKey)
     {
         return new HubConnectionBuilder()
-            .WithUrl(new Uri(Server.BaseAddress, "hub/agent"), options =>
+            .WithUrl(new Uri(Server.BaseAddress, "hub/bridge"), options =>
             {
                 new InMemoryTransport(this).Configure(options);
                 options.Headers["Authorization"] = "Bearer " + apiKey;
@@ -140,7 +140,7 @@ internal sealed class E2EStack : WebApplicationFactory<MCPal.Cloud.CloudModule>
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
     }
 
-    /// <summary>Polls until the client lists the tool, i.e. the agent has registered.</summary>
+    /// <summary>Polls until the client lists the tool, i.e. the bridge has registered.</summary>
     public static async Task WaitForToolAsync(McpClient client, string toolName, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

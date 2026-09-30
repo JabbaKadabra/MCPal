@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using MCPal.Cloud.Tunnel;
+using MCPal.Server.Tunnel;
 using MCPal.Contracts;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +9,7 @@ using ModelContextProtocol.Protocol;
 
 namespace MCPal.E2E.Tests;
 
-/// <summary>Real SDK MCP client, cloud host, real agent, real stdio MCP server.</summary>
+/// <summary>Real SDK MCP client, server host, real bridge, real stdio MCP server.</summary>
 [TestFixture]
 internal sealed class EndToEndTests
 {
@@ -22,7 +22,7 @@ internal sealed class EndToEndTests
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
@@ -40,22 +40,22 @@ internal sealed class EndToEndTests
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__weather", Ct);
         await using var local = await E2EStack.ConnectLocalServerAsync(Ct);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
         var localTools = await local.ListToolsAsync(cancellationToken: Ct);
-        var viaCloud = await client.CallToolAsync("test__weather", new Dictionary<string, object?> { ["city"] = "Linz" }, cancellationToken: Ct);
+        var viaServer = await client.CallToolAsync("test__weather", new Dictionary<string, object?> { ["city"] = "Linz" }, cancellationToken: Ct);
         var direct = await local.CallToolAsync("weather", new Dictionary<string, object?> { ["city"] = "Linz" }, cancellationToken: Ct);
 
-        var cloudSchema = tools.Single(t => t.Name == "test__weather").ProtocolTool.OutputSchema;
+        var serverSchema = tools.Single(t => t.Name == "test__weather").ProtocolTool.OutputSchema;
         var localSchema = localTools.Single(t => t.Name == "weather").ProtocolTool.OutputSchema;
-        cloudSchema.Should().NotBeNull();
-        cloudSchema?.GetRawText().Should().Be(localSchema?.GetRawText());
-        viaCloud.StructuredContent?.GetRawText().Should().Be(direct.StructuredContent?.GetRawText());
-        viaCloud.StructuredContent?.GetProperty("city").GetString().Should().Be("Linz");
+        serverSchema.Should().NotBeNull();
+        serverSchema?.GetRawText().Should().Be(localSchema?.GetRawText());
+        viaServer.StructuredContent?.GetRawText().Should().Be(direct.StructuredContent?.GetRawText());
+        viaServer.StructuredContent?.GetProperty("city").GetString().Should().Be("Linz");
     }
 
     [Test]
@@ -63,7 +63,7 @@ internal sealed class EndToEndTests
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__fail", Ct);
 
@@ -73,11 +73,11 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task CallTool_ToolSlowerThanCloudTimeout_ReturnsTimeoutError()
+    public async Task CallTool_ToolSlowerThanServerTimeout_ReturnsTimeoutError()
     {
         await using var stack = await E2EStack.CreateAsync(Ct, new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
 
@@ -88,11 +88,11 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task CallTool_CloudTimesOut_LocalToolIsCancelledLongBeforeItsOwnEnd()
+    public async Task CallTool_ServerTimesOut_LocalToolIsCancelledLongBeforeItsOwnEnd()
     {
         await using var stack = await E2EStack.CreateAsync(Ct, new() { ["Mcpal:ToolCallTimeoutSeconds"] = "2" });
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
         var clock = Stopwatch.StartNew();
@@ -123,19 +123,19 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task StatusFile_AgentConnectsAndStops_ShowsServersThenDisconnected()
+    public async Task StatusFile_BridgeConnectsAndStops_ShowsServersThenDisconnected()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var statusFile = Path.Combine(Path.GetTempPath(), "mcpal-e2e-" + Guid.NewGuid().ToString("N"), "status.json");
-        var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, statusFile: statusFile);
+        var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct, statusFile: statusFile);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
         var running = await WaitForStatusAsync(statusFile, status => status.LastRegisteredAt is not null);
-        await agent.StopAsync(Ct);
-        agent.Dispose();
-        var stopped = MCPal.Agent.Status.AgentStatusFile.Read(statusFile);
+        await bridge.StopAsync(Ct);
+        bridge.Dispose();
+        var stopped = MCPal.Bridge.Status.BridgeStatusFile.Read(statusFile);
 
         running.Tunnel.Should().Be("connected");
         running.Servers.Should().ContainSingle().Which.State.Should().Be("running");
@@ -143,13 +143,13 @@ internal sealed class EndToEndTests
         stopped.Tunnel.Should().Be("disconnected");
     }
 
-    private static async Task<MCPal.Agent.Status.AgentStatus> WaitForStatusAsync(string path, Func<MCPal.Agent.Status.AgentStatus, bool> condition)
+    private static async Task<MCPal.Bridge.Status.BridgeStatus> WaitForStatusAsync(string path, Func<MCPal.Bridge.Status.BridgeStatus, bool> condition)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         while (true)
         {
-            if (File.Exists(path) && MCPal.Agent.Status.AgentStatusFile.Read(path) is { } status && condition(status))
+            if (File.Exists(path) && MCPal.Bridge.Status.BridgeStatusFile.Read(path) is { } status && condition(status))
             {
                 return status;
             }
@@ -159,14 +159,14 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task Agent_ProtocolRejectedByCloud_LogsClearMessageAndBacksOffLongBeforeTryingAgain()
+    public async Task Bridge_ProtocolRejectedByServer_LogsClearMessageAndBacksOffLongBeforeTryingAgain()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var logs = new CapturingLoggerProvider();
 
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, timeProvider: time, protocolVersion: "9.0", logs: logs);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct, timeProvider: time, protocolVersion: "9.0", logs: logs);
         var first = await logs.WaitForAsync(entry => entry.Message.Contains("too old or too new", StringComparison.Ordinal), 1, Ct);
         time.Advance(TimeSpan.FromMinutes(5));
         await Task.Delay(500, Ct);
@@ -183,7 +183,7 @@ internal sealed class EndToEndTests
 
         first[0].Level.Should().Be(LogLevel.Error);
         first[0].Message.Should().Contain("protocol 9.0").And.Contain(stack.Server.BaseAddress.ToString().TrimEnd('/')).And.Contain("Download");
-        afterFiveMinutes.Should().Be(1, "an incompatible agent must not register every 30 seconds");
+        afterFiveMinutes.Should().Be(1, "an incompatible bridge must not register every 30 seconds");
         second[1].Level.Should().Be(LogLevel.Debug, "repeats of the same rejection stay quiet");
     }
 
@@ -192,7 +192,7 @@ internal sealed class EndToEndTests
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
         var clock = Stopwatch.StartNew();
@@ -205,18 +205,18 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task AgentStopsAndRestarts_ToolsDisappearThenReturn()
+    public async Task BridgeStopsAndRestarts_ToolsDisappearThenReturn()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        var first = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        var first = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
         await first.StopAsync(Ct);
         first.Dispose();
         var offline = await client.CallToolAsync("test__echo", new Dictionary<string, object?> { ["text"] = "x" }, cancellationToken: Ct);
-        using var second = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var second = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
         var online = await client.CallToolAsync("test__echo", new Dictionary<string, object?> { ["text"] = "back" }, cancellationToken: Ct);
 
@@ -226,13 +226,13 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task TwoCompanies_EachSeesAndReachesOnlyOwnAgent()
+    public async Task TwoCompanies_EachSeesAndReachesOnlyOwnBridge()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var globex = await stack.SeedCompanyAsync("Globex", Ct);
-        using var acmeAgent = await stack.StartAgentAsync(acme, "alpha", "acme-01", Ct);
-        using var globexAgent = await stack.StartAgentAsync(globex, "beta", "globex-01", Ct);
+        using var acmeBridge = await stack.StartBridgeAsync(acme, "alpha", "acme-01", Ct);
+        using var globexBridge = await stack.StartBridgeAsync(globex, "beta", "globex-01", Ct);
         await using var acmeClient = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await using var globexClient = await stack.ConnectClientAsync(globex.RawKey, Ct);
         await E2EStack.WaitForToolAsync(acmeClient, "alpha__echo", Ct);
@@ -247,16 +247,16 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task ServerNameHeldByStaleConnection_AgentRegistersItOnceFreed()
+    public async Task ServerNameHeldByStaleConnection_BridgeRegistersItOnceFreed()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var stale = stack.CreateTunnelConnection(acme.RawKey);
         await stale.StartAsync(Ct);
-        var catalog = new AgentCatalog("hq-01", "1.0", ProtocolVersion.Current, [new ServerCatalog("test", [new ToolDescriptor("old", null, null, "{\"type\":\"object\"}", null)])]);
+        var catalog = new BridgeCatalog("hq-01", "1.0", ProtocolVersion.Current, [new ServerCatalog("test", [new ToolDescriptor("old", null, null, "{\"type\":\"object\"}", null)])]);
         await stale.InvokeAsync<RegisterResult>("Register", catalog, Ct);
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct, time);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct, time);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__old", Ct);
         var registry = stack.Services.GetRequiredService<ConnectionRegistry>();
@@ -282,7 +282,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var other = await stack.SeedCompanyAsync("Other", Ct);
-        using var agent = await stack.StartAgentAsync(acme, "test", "hq-01", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
         await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
