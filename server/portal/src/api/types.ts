@@ -15,6 +15,8 @@ export interface TeamMember {
   role: Role;
   emailConfirmed: boolean;
   disabled: boolean;
+  /** Groups the user was added to; `Everyone` is implicit and not listed. */
+  groups: string[];
 }
 
 export interface Invitation {
@@ -127,4 +129,37 @@ export interface AuditFilters {
   keyId: string;
   from: string;
   to: string;
+}
+
+export interface Grant {
+  id: string;
+  serverPattern: string;
+  toolPatterns: string[];
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  /** All active users belong to it implicitly; it cannot be renamed, deleted or given members. */
+  isEveryone: boolean;
+  externalId?: string | null;
+  memberIds: string[];
+  grants: Grant[];
+}
+
+export interface VisibleTool {
+  server: string;
+  tool: string;
+  publicName: string;
+}
+
+export interface UserAccess {
+  userId: string;
+  email: string;
+  role: Role;
+  disabled: boolean;
+  /** Owners may use every tool regardless of grants. */
+  allTools: boolean;
+  groups: string[];
+  tools: VisibleTool[];
 }

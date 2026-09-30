@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using MCPal.Server.Access;
 using MCPal.Server.Audit;
 using MCPal.Server.Diagnostics;
 using MCPal.Server.Tenancy;
@@ -15,6 +16,7 @@ namespace MCPal.Server.Mcp;
 /// <summary>Forwards a tool call of one company to the bridge connection that owns the tool.</summary>
 internal sealed class CallRelay(
     ConnectionRegistry registry,
+    AccessEvaluator access,
     IBridgeInvoker invoker,
     ServerTelemetry telemetry,
     IAuditSink audit,
@@ -35,7 +37,10 @@ internal sealed class CallRelay(
         var companyId = caller.CompanyId;
         var startedAt = timeProvider.GetUtcNow();
         var started = timeProvider.GetTimestamp();
-        if (!registry.TryResolve(companyId, publicName, out var tool))
+        var policy = await access.GetUserPolicyAsync(companyId, caller.UserId, cancellationToken);
+
+        // A tool the caller may not use answers exactly like an unknown tool: its existence is not revealed.
+        if (!registry.TryResolve(companyId, publicName, out var tool) || policy is null || !policy.Allows(tool.ServerName, tool.Descriptor.Name))
         {
             var message = $"Tool '{publicName}' is not available (bridge offline or unknown tool).";
             using var offline = telemetry.StartToolCall(companyId, string.Empty, publicName);

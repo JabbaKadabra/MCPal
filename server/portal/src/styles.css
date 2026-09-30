@@ -944,3 +944,34 @@ td.num {
     transition: none !important;
   }
 }
+
+/* Access groups */
+
+.checklist {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.5rem;
+}
+
+.checklist label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.checklist input[type='checkbox'] {
+  width: auto;
+}
+
+.grant-form {
+  margin-top: 1rem;
+}
+
+.panel h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1rem;
+}

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using MCPal.Server.Access;
 using MCPal.Server.Audit;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
@@ -81,6 +82,7 @@ internal static class PortalEndpoints
 
         var secured = group.MapGroup(string.Empty).RequireAuthorization(Policy).AddEndpointFilter<ActiveUserFilter>();
         TeamEndpoints.Map(group, secured);
+        AccessEndpoints.Map(secured);
         secured.MapGet("keys", ListKeysAsync);
         secured.MapPost("keys", CreateKeyAsync);
         secured.MapDelete("keys/{id:guid}", RevokeKeyAsync);
@@ -101,6 +103,7 @@ internal static class PortalEndpoints
         SignInManager<PortalUser> signIn,
         AccountMailer mailer,
         ICompanyService companies,
+        AccessPolicyCache policyCache,
         MCPalDbContext db,
         CancellationToken cancellationToken)
     {
@@ -137,6 +140,7 @@ internal static class PortalEndpoints
         }
 
         await transaction.CommitAsync(cancellationToken);
+        policyCache.Invalidate(company.Id);
 
         // New accounts start unconfirmed and are signed in right away; the mail keeps later password logins possible.
         await mailer.SendConfirmationAsync(user, cancellationToken);
@@ -207,7 +211,7 @@ internal static class PortalEndpoints
 
     private const int MaxDisplayNameLength = 200;
 
-    private static async Task<IResult> UpdateMeAsync(UpdateMeRequest? request, ClaimsPrincipal principal, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
+    private static async Task<IResult> UpdateMeAsync(UpdateMeRequest? request, ClaimsPrincipal principal, UserManager<PortalUser> users, ICompanyService companies, AccessPolicyCache policyCache, CancellationToken cancellationToken)
     {
         if (await users.GetUserAsync(principal) is not { } user)
         {
@@ -226,6 +230,9 @@ internal static class PortalEndpoints
         {
             return Problems([.. updated.Errors.Select(e => e.Description)]);
         }
+
+        // The display name travels in the caller token, which is built from the cached policy.
+        policyCache.Invalidate(user.CompanyId);
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
         return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role), user.DisplayName));

@@ -1,7 +1,9 @@
+using MCPal.Server.Access;
 using MCPal.Server.Audit;
 using MCPal.Server.OAuth;
 using MCPal.Server.Portal;
 using MCPal.Server.Tenancy;
+using MCPal.Server.Tunnel;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -22,6 +24,12 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
     public DbSet<ToolCallAudit> ToolCallAudits => Set<ToolCallAudit>();
 
     public DbSet<Invitation> Invitations => Set<Invitation>();
+
+    public DbSet<AccessGroup> AccessGroups => Set<AccessGroup>();
+
+    public DbSet<AccessGroupMember> AccessGroupMembers => Set<AccessGroupMember>();
+
+    public DbSet<AccessGrant> AccessGrants => Set<AccessGrant>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -68,6 +76,36 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             invitation.HasIndex(i => i.TokenHash).IsUnique();
             invitation.HasIndex(i => new { i.CompanyId, i.Email });
             invitation.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<AccessGroup>(group =>
+        {
+            group.HasKey(g => g.Id);
+            group.Property(g => g.Name).HasMaxLength(AccessService.MaxGroupNameLength);
+            group.Property(g => g.ExternalId).HasMaxLength(500);
+            group.HasIndex(g => new { g.CompanyId, g.Name });
+            // One implicit Everyone group per company.
+            group.HasIndex(g => g.CompanyId).IsUnique().HasDatabaseName("IX_AccessGroups_Everyone").HasFilter("\"IsEveryone\"");
+            group.HasOne<Company>().WithMany().HasForeignKey(g => g.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<AccessGroupMember>(member =>
+        {
+            member.HasKey(m => new { m.GroupId, m.UserId });
+            member.HasIndex(m => new { m.CompanyId, m.UserId });
+            member.HasOne<AccessGroup>().WithMany().HasForeignKey(m => m.GroupId).OnDelete(DeleteBehavior.Cascade);
+            member.HasOne<PortalUser>().WithMany().HasForeignKey(m => m.UserId).OnDelete(DeleteBehavior.Cascade);
+            member.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<AccessGrant>(grant =>
+        {
+            grant.HasKey(g => g.Id);
+            grant.Property(g => g.ServerPattern).HasMaxLength(ToolNaming.MaxServerNameLength);
+            grant.Property(g => g.ToolPatterns).HasColumnType("text[]");
+            grant.HasIndex(g => new { g.CompanyId, g.GroupId });
+            grant.HasOne<AccessGroup>().WithMany().HasForeignKey(g => g.GroupId).OnDelete(DeleteBehavior.Cascade);
+            grant.HasOne<Company>().WithMany().HasForeignKey(g => g.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<OAuthClient>(client =>

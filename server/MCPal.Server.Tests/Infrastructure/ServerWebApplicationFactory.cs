@@ -1,4 +1,5 @@
 using Autofac;
+using MCPal.Server.Access;
 using MCPal.Server.OAuth;
 using MCPal.Server.Portal;
 using MCPal.Server.Storage;
@@ -77,6 +78,9 @@ internal sealed class ServerWebApplicationFactory : WebApplicationFactory<Progra
         var user = new PortalUser { UserName = email, Email = email, EmailConfirmed = true, CompanyId = companyId, Role = role };
         var created = await services.GetRequiredService<UserManager<PortalUser>>().CreateAsync(user, PortalClient.Password);
         created.Succeeded.Should().BeTrue(string.Join(", ", created.Errors.Select(e => e.Description)));
+
+        // Users created behind the portal's back: the cached access policy of the company does not know them yet.
+        services.GetRequiredService<AccessPolicyCache>().Invalidate(companyId);
         return user;
     }
 

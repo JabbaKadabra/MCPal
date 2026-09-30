@@ -29,6 +29,8 @@ export function Layout() {
           <NavLink to="/connections">{t('nav.connections')}</NavLink>
           <NavLink to="/audit">{t('nav.audit')}</NavLink>
           {me.data?.role === 'owner' && <NavLink to="/users">{t('nav.users')}</NavLink>}
+          {me.data?.role === 'owner' && <NavLink to="/groups">{t('nav.groups')}</NavLink>}
+          <NavLink to="/access">{t('nav.access')}</NavLink>
           <NavLink to="/connect">{t('nav.connect')}</NavLink>
         </nav>
         <span className="spacer" />

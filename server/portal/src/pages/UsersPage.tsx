@@ -13,8 +13,10 @@ export function UsersPage() {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('member');
   const [invitedEmail, setInvitedEmail] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const team = useQuery({ queryKey: teamQueryKey, queryFn: api.team });
+  const viewed = useQuery({ queryKey: ['user-access', viewing], queryFn: () => api.userAccess(viewing ?? ''), enabled: viewing !== null });
   const invite = useMutation({
     mutationFn: () => api.invite(email, role),
     onSuccess: async (invitation) => {
@@ -80,6 +82,7 @@ export function UsersPage() {
                 <tr>
                   <th>{t('users.col.email')}</th>
                   <th>{t('users.col.role')}</th>
+                  <th>{t('users.col.groups')}</th>
                   <th>{t('users.col.status')}</th>
                   <th />
                 </tr>
@@ -94,6 +97,7 @@ export function UsersPage() {
                     <td>
                         <Tag tone={member.role === 'owner' ? 'ink' : 'plain'}>{t(`users.role.${member.role}` satisfies MessageKey)}</Tag>
                       </td>
+                    <td>{member.groups.join(', ')}</td>
                     <td>
                         {member.disabled ? (
                           <Tag tone="off">{t('users.status.disabled')}</Tag>
@@ -104,6 +108,9 @@ export function UsersPage() {
                         )}
                       </td>
                     <td>
+                      <button type="button" className="ghost small" onClick={() => setViewing(viewing === member.id ? null : member.id)}>
+                        {t('users.viewAccess')}
+                      </button>{' '}
                       <button
                         type="button"
                         className="ghost small"
@@ -132,6 +139,25 @@ export function UsersPage() {
               </tbody>
             </table>
           </div>
+
+          {viewing !== null && viewed.data !== undefined && (
+            <section className="panel" aria-label={t('users.access.title', { email: viewed.data.email })}>
+              <h2>{t('users.access.title', { email: viewed.data.email })}</h2>
+              <p>{viewed.data.groups.length === 0 ? t('users.access.noGroups') : viewed.data.groups.join(', ')}</p>
+              {viewed.data.allTools && <p className="muted">{t('access.ownerAll')}</p>}
+              {viewed.data.tools.length === 0 ? (
+                <p className="muted">{t('access.noTools')}</p>
+              ) : (
+                <ul className="tools">
+                  {viewed.data.tools.map((tool) => (
+                    <li key={tool.publicName}>
+                      <code>{tool.publicName}</code>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           {team.data.invitations.length > 0 && (
             <>

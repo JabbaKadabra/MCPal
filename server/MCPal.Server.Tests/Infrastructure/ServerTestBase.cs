@@ -1,4 +1,5 @@
 using Autofac;
+using MCPal.Server.Access;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
 using Microsoft.Extensions.Configuration;
@@ -56,6 +57,7 @@ internal abstract class ServerTestBase
         var db = scope.Resolve<MCPalDbContext>();
         db.Users.Add(user);
         await db.SaveChangesAsync(Ct);
+        scope.Resolve<AccessPolicyCache>().Invalidate(companyId);
         return user;
     }
 

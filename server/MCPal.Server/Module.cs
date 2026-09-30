@@ -1,5 +1,6 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
+using MCPal.Server.Access;
 using MCPal.Server.Audit;
 using MCPal.Server.Diagnostics;
 using MCPal.Server.Mcp;
@@ -71,6 +72,10 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         builder.RegisterType<AccountMailer>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<TeamService>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<ConnectionRegistry>().AsSelf().SingleInstance();
+        builder.RegisterType<AccessPolicyCache>().AsSelf().SingleInstance();
+        builder.RegisterType<AccessPolicyLoader>().AsSelf().InstancePerLifetimeScope();
+        builder.RegisterType<AccessEvaluator>().AsSelf().InstancePerLifetimeScope();
+        builder.RegisterType<AccessService>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<ServerTelemetry>().AsSelf().SingleInstance();
         builder.RegisterType<AuditWriter>().AsSelf().As<IAuditSink>().SingleInstance();
         builder.RegisterType<AuditRetention>().AsSelf().InstancePerLifetimeScope();

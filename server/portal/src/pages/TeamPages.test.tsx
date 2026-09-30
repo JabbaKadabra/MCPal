@@ -27,8 +27,8 @@ function csrfThen(handler: (call: RecordedCall) => { status?: number; body?: unk
 
 const team: Team = {
   users: [
-    { id: 'u1', email: 'owner@acme.example', role: 'owner', emailConfirmed: true, disabled: false },
-    { id: 'u2', email: 'member@acme.example', role: 'member', emailConfirmed: true, disabled: false },
+    { id: 'u1', email: 'owner@acme.example', role: 'owner', emailConfirmed: true, disabled: false, groups: [] },
+    { id: 'u2', email: 'member@acme.example', role: 'member', emailConfirmed: true, disabled: false, groups: [] },
   ],
   invitations: [{ id: 'i1', email: 'pending@acme.example', role: 'member', expiresAt: '2026-10-07T10:00:00Z', createdAt: '2026-09-30T10:00:00Z', invitedBy: 'owner@acme.example' }],
 };
@@ -57,6 +57,27 @@ describe('team pages', () => {
       if (memberRow === null) return;
       expect(within(memberRow).getByText('Member')).toBeInTheDocument();
       expect(screen.getByText('pending@acme.example')).toBeInTheDocument();
+    });
+
+    it('shows the groups of a user and their effective access on request', async () => {
+      const withGroups: Team = { ...team, users: team.users.map((u) => (u.id === 'u2' ? { ...u, groups: ['hr', 'wiki'] } : u)) };
+      mockFetch((call) => {
+        if (call.url === '/api/portal/access/users/u2') {
+          return { body: { userId: 'u2', email: 'member@acme.example', role: 'member', disabled: false, allTools: false, groups: ['Everyone', 'hr'], tools: [{ server: 'hr', tool: 'salaries', publicName: 'hr__salaries' }] } };
+        }
+        return { body: withGroups };
+      });
+      const user = userEvent.setup();
+      renderAt('/users', page);
+
+      const memberRow = (await screen.findByText('member@acme.example')).closest('tr');
+      if (memberRow === null) throw new Error('row missing');
+      expect(within(memberRow).getByText('hr, wiki')).toBeInTheDocument();
+      await user.click(within(memberRow).getByRole('button', { name: 'View access' }));
+
+      const panel = await screen.findByRole('region', { name: 'Access of member@acme.example' });
+      expect(within(panel).getByText('hr__salaries')).toBeInTheDocument();
+      expect(within(panel).getByText('Everyone, hr')).toBeInTheDocument();
     });
 
     it('invites a colleague with the chosen role', async () => {
@@ -124,7 +145,7 @@ describe('team pages', () => {
 
     it('disables a user after confirmation and offers to enable a disabled one', async () => {
       vi.stubGlobal('confirm', vi.fn(() => true));
-      const withDisabled: Team = { ...team, users: [team.users[0] ?? (() => { throw new Error('fixture'); })(), { id: 'u3', email: 'off@acme.example', role: 'member', emailConfirmed: true, disabled: true }, ...team.users.slice(1)] };
+      const withDisabled: Team = { ...team, users: [team.users[0] ?? (() => { throw new Error('fixture'); })(), { id: 'u3', email: 'off@acme.example', role: 'member', emailConfirmed: true, disabled: true, groups: ['hr'] }, ...team.users.slice(1)] };
       const calls = mockFetch(
         csrfThen((call) => {
           if (call.method === 'POST') return { body: team.users[1] };

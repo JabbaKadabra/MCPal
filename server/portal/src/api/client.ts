@@ -1,4 +1,4 @@
-import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Team, TeamMember } from './types';
+import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Team, TeamMember, Group, Grant, UserAccess } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -41,7 +41,7 @@ function extractErrors(body: unknown, fallback: string): { errors: string[]; cod
   return { errors: [fallback] };
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -121,6 +121,18 @@ export const api = {
   invitationPreview: (token: string) =>
     request<InvitationPreview>('GET', `/api/portal/invitations/preview?token=${encodeURIComponent(token)}`),
   acceptInvitation: (token: string, password: string) => request<Me>('POST', '/api/portal/invitations/accept', { token, password }),
+  groups: () => request<Group[]>('GET', '/api/portal/groups'),
+  createGroup: (name: string) => request<Group>('POST', '/api/portal/groups', { name }),
+  renameGroup: (id: string, name: string) => request<Group>('PATCH', `/api/portal/groups/${id}`, { name }),
+  deleteGroup: (id: string) => request<void>('DELETE', `/api/portal/groups/${id}`),
+  setGroupMembers: (id: string, userIds: string[]) => request<Group>('PUT', `/api/portal/groups/${id}/members`, { userIds }),
+  addGrant: (groupId: string, serverPattern: string, toolPatterns: string[]) =>
+    request<Grant>('POST', `/api/portal/groups/${groupId}/grants`, { serverPattern, toolPatterns }),
+  updateGrant: (id: string, serverPattern: string, toolPatterns: string[]) =>
+    request<Grant>('PUT', `/api/portal/grants/${id}`, { serverPattern, toolPatterns }),
+  deleteGrant: (id: string) => request<void>('DELETE', `/api/portal/grants/${id}`),
+  myAccess: () => request<UserAccess>('GET', '/api/portal/access/me'),
+  userAccess: (id: string) => request<UserAccess>('GET', `/api/portal/access/users/${encodeURIComponent(id)}`),
   keys: () => request<ApiKey[]>('GET', '/api/portal/keys'),
   createKey: (name: string, options?: NewApiKey) => request<CreatedApiKey>('POST', '/api/portal/keys', { name, ...options }),
   revokeKey: (id: string) => request<void>('DELETE', `/api/portal/keys/${id}`),

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Cryptography;
+using MCPal.Server.Access;
 using MCPal.Server.OAuth;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
@@ -9,7 +10,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCPal.Server.Portal;
 
-internal sealed record TeamMember(string Id, string Email, string? DisplayName, PortalRole Role, bool EmailConfirmed, bool Disabled);
+/// <param name="Groups">Names of the groups the user was added to (<c>Everyone</c> is implicit and not listed).</param>
+internal sealed record TeamMember(string Id, string Email, string? DisplayName, PortalRole Role, bool EmailConfirmed, bool Disabled, IReadOnlyList<string> Groups);
 
 internal sealed record PendingInvitation(Guid Id, string Email, PortalRole Role, DateTimeOffset ExpiresAt, DateTimeOffset CreatedAt, string? InvitedBy);
 
@@ -42,6 +44,7 @@ internal sealed class TeamService(
     UserManager<PortalUser> users,
     IApiKeyService apiKeys,
     OAuthTokenRevoker oauthTokens,
+    AccessPolicyCache policyCache,
     ICompanyService companies,
     AccountMailer mailer,
     TimeProvider timeProvider)
@@ -57,8 +60,15 @@ internal sealed class TeamService(
         var members = await db.Users.AsNoTracking()
             .Where(u => u.CompanyId == companyId)
             .OrderBy(u => u.Email)
-            .Select(u => new TeamMember(u.Id, u.Email ?? string.Empty, u.DisplayName, u.Role, u.EmailConfirmed, u.Disabled))
+            .Select(u => new TeamMember(u.Id, u.Email ?? string.Empty, u.DisplayName, u.Role, u.EmailConfirmed, u.Disabled, Array.Empty<string>()))
             .ToListAsync(cancellationToken);
+        var groupNames = (await (from membership in db.AccessGroupMembers.AsNoTracking()
+                                 join grp in db.AccessGroups.AsNoTracking() on membership.GroupId equals grp.Id
+                                 where membership.CompanyId == companyId && grp.CompanyId == companyId
+                                 orderby grp.Name
+                                 select new { membership.UserId, grp.Name }).ToListAsync(cancellationToken))
+            .ToLookup(row => row.UserId, row => row.Name);
+        members = [.. members.Select(m => m with { Groups = [.. groupNames[m.Id]] })];
         var emails = members.ToDictionary(m => m.Id, m => m.Email);
         var invitations = await db.Invitations.AsNoTracking()
             .Where(i => i.CompanyId == companyId && i.AcceptedAt == null && i.ExpiresAt > now)
@@ -170,6 +180,7 @@ internal sealed class TeamService(
         }
 
         await transaction.CommitAsync(cancellationToken);
+        policyCache.Invalidate(invitation.CompanyId);
         return TeamResult<PortalUser>.Ok(user);
     }
 
@@ -208,6 +219,7 @@ internal sealed class TeamService(
                 return TeamResult<TeamMember>.Fail(TeamFailure.Invalid, [.. updated.Errors.Select(e => e.Description)]);
             }
 
+            policyCache.Invalidate(companyId);
 
             if (disabled)
             {
@@ -239,6 +251,7 @@ internal sealed class TeamService(
         await RevokeCredentialsAsync(companyId, target, cancellationToken);
         var removed = ToMember(target);
         var result = await users.DeleteAsync(target);
+        policyCache.Invalidate(companyId);
         return result.Succeeded
             ? TeamResult<TeamMember>.Ok(removed)
             : TeamResult<TeamMember>.Fail(TeamFailure.Invalid, [.. result.Errors.Select(e => e.Description)]);
@@ -247,7 +260,7 @@ internal sealed class TeamService(
     private static string LastOwnerMessage(string what) => $"The last active owner cannot be {what}. Make someone else an owner first.";
 
     private static TeamMember ToMember(PortalUser user) =>
-        new(user.Id, user.Email ?? string.Empty, user.DisplayName, user.Role, user.EmailConfirmed, user.Disabled);
+        new(user.Id, user.Email ?? string.Empty, user.DisplayName, user.Role, user.EmailConfirmed, user.Disabled, []);
 
     /// <summary>True when the user is an active owner and no other active owner of the company exists.</summary>
     private async Task<bool> IsLastActiveOwnerAsync(PortalUser target, CancellationToken cancellationToken)

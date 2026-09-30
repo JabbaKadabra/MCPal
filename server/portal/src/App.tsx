@@ -7,8 +7,10 @@ import { ConfirmEmailPage } from './pages/ConfirmEmailPage';
 import { ConnectionsPage } from './pages/ConnectionsPage';
 import { ConnectPage } from './pages/ConnectPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { GroupsPage } from './pages/GroupsPage';
 import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
+import { MyAccessPage } from './pages/MyAccessPage';
 import { OAuthAuthorizePage } from './pages/OAuthAuthorizePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SignupPage } from './pages/SignupPage';
@@ -35,6 +37,8 @@ export function App() {
         <Route path="/connections" element={<ConnectionsPage />} />
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/groups" element={<GroupsPage />} />
+        <Route path="/access" element={<MyAccessPage />} />
         <Route path="/connect" element={<ConnectPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/keys" replace />} />

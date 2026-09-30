@@ -8,7 +8,7 @@ internal sealed record InviteRequest(string? Email, string? Role);
 
 internal sealed record AcceptInvitationRequest(string? Token, string? Password);
 
-internal sealed record TeamMemberResponse(string Id, string Email, string? DisplayName, string Role, bool EmailConfirmed, bool Disabled);
+internal sealed record TeamMemberResponse(string Id, string Email, string? DisplayName, string Role, bool EmailConfirmed, bool Disabled, IReadOnlyList<string> Groups);
 
 internal sealed record InvitationResponse(Guid Id, string Email, string Role, DateTimeOffset ExpiresAt, DateTimeOffset CreatedAt, string? InvitedBy);
 
@@ -50,7 +50,7 @@ internal static class TeamEndpoints
 
         var (members, invitations) = await team.ListAsync(companyId, cancellationToken);
         return Results.Json(new TeamResponse(
-            [.. members.Select(m => new TeamMemberResponse(m.Id, m.Email, m.DisplayName, RoleName(m.Role), m.EmailConfirmed, m.Disabled))],
+            [.. members.Select(m => new TeamMemberResponse(m.Id, m.Email, m.DisplayName, RoleName(m.Role), m.EmailConfirmed, m.Disabled, m.Groups))],
             [.. invitations.Select(ToResponse)]));
     }
 
@@ -94,7 +94,7 @@ internal static class TeamEndpoints
         var result = await team.SetDisabledAsync(companyId, id, disabled, cancellationToken);
         return result.Failure switch
         {
-            TeamFailure.None when result.Value is { } member => Results.Json(new TeamMemberResponse(member.Id, member.Email, member.DisplayName, RoleName(member.Role), member.EmailConfirmed, member.Disabled)),
+            TeamFailure.None when result.Value is { } member => Results.Json(new TeamMemberResponse(member.Id, member.Email, member.DisplayName, RoleName(member.Role), member.EmailConfirmed, member.Disabled, member.Groups)),
             TeamFailure.NotFound => Results.NotFound(),
             _ => PortalEndpoints.Problems(result.Errors),
         };
