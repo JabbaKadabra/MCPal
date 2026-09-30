@@ -245,6 +245,31 @@ Skills `nordstein-code-basics` and `nordstein-code-csharp` apply. Key points for
 - SPA i18n is a small typed `t()` helper with an English dictionary (`server/portal/src/i18n`).
 - Renamed before the first release (2026-09-30): the on-prem process "agent" is now the **bridge** (`MCPal.Bridge`, hub `/hub/bridge`, `ApiKeyPurpose.Bridge`, audit column `BridgeName` via migration `RenameAgentToBridge`, `mcpal-bridge` binary and service), the cloud host is the **server** (`MCPal.Server`, image `mcpal-server`). In `mcpal.json` the section `cloud` is now `mcpal` (`url`, `apiKey`, `bridgeName`). The repo is grouped by artifact (`server/`, `bridge/`, `shared/`, `tests/`) with one `MCPal.slnx` and a solution filter per artifact. Older text in this file may still use the old names.
 
+### Done (2026-09-30): user-level access control and caller context
+- Identity is the **portal user**. API keys are `Personal` (personal access tokens, `ApiKey.UserId`) or `Bridge` (company, tunnels only); OAuth tokens and codes belong to the signed-in user, and the OAuth sign-in is the portal login only (migration `UserBoundCredentials`). Users have `DisplayName`, `Disabled`, `ExternalIssuer`/`ExternalSubject` (SSO-ready); disabling or removing a user revokes their tokens, `ActiveUserFilter` re-checks the user on every portal call, the last active owner is protected.
+- `Access/`: `AccessGroup` (implicit `Everyone`), `AccessGroupMember`, `AccessGrant`, `AccessPolicyLoader`/`AccessPolicyCache`/`AccessEvaluator`/`AccessService`/`AccessEndpoints` (migration `AccessGroupsAndGrants`, which also creates Everyone `* / *` for existing companies). `MCPal.Contracts.ToolPattern` is the shared glob (moved out of the bridge's `ToolFilter`).
+- Audit rows carry `UserId` (migration `AuditUserId`); audit page and export are owner-only.
+- `Access/UserContext/`: `SigningKeyStore`, `SigningKeyRotationService`, `UserContextIssuer`, `JwksEndpoints` (migration `SigningKeys`); tunnel protocol **1.2** (`CallToolRequest.User`, gated by `ProtocolVersion.UserContextMinor`); `Mcpal:DataProtectionPath` required in Production.
+- Bridge: `UserContextMeta`, `UserTokenHeaderHandler`/`UserTokenScope`, `JwksFileWriter`, config `userContext`, `userTokenHeader`, `jwksFile`; `whoami` in `MCPal.TestMcpServer`; E2E tests with an in-process HTTP local server.
+- Docs: `docs/access-control.md` (new), `docs/oauth.md`, `docs/tunnel-protocol.md`, README, CHANGELOG.
+- Verified: `dotnet build MCPal.slnx` 0 warnings; `dotnet test` green with Docker (Bridge 116, Server 437, E2E 17, all with Docker/Testcontainers); `npm run typecheck`, `npm test` (107 passed) and `npm run e2e:typecheck` in `server/portal` green. Two tests are timing-sensitive under the load of a parallel `dotnet test MCPal.slnx` and failed once each in a full run while passing alone: `AuditWriterTests.StopAsync_EntriesStillQueued_AreWrittenBeforeShutdownCompletes` (server) and `LocalServerManagerTests.CallToolAsync_CallerCancels_ReturnsErrorQuicklyAndKeepsServerRunning` (bridge, waits for a stdio server to see the cancellation).
+
+#### Deviations from the plan and choices where it was open (user access control)
+- Everything in the plan was implemented as written except the points below.
+- Key-purpose enum renumbered `Personal = 0`, `Bridge = 1` (CA1008); the portal API speaks `personal` and `bridge`, and sending `allowedServers` is a `400`.
+- Disable/enable endpoints are `POST /api/portal/users/{id}/disable` and `/enable`; access views are `GET /api/portal/access/me` and `/access/users/{id}`; groups and grants live under `/api/portal/groups` and `/api/portal/grants`.
+- `AuditEntry.authKind` for personal access tokens is `pat` (bridge keys cannot call tools); old rows keep `apikey`.
+- The company slug in the caller token comes from `CompanyPolicy` (one more query in the policy loader), so issuing a token needs no database query.
+- `McpalEnvironmentValidator` makes `DataProtectionPath` required only when an `IHostEnvironment` is present and Production (tests that build the container directly are not checked).
+- `userTokenHeader` validation goes one step beyond the plan: a header that also appears (any name, case-insensitive) in static `headers`, and `userTokenHeader` together with `userContext: false`, are configuration errors.
+- Server patterns of grants are validated like server names (not blank, at most 200 characters, no control characters), tool patterns with `ToolPattern.IsValid` (letters, digits, `_ - . * ?`, at most 128 characters, at most 50 per grant).
+- The `SigningKeyStore` uses a Postgres advisory transaction lock so several instances never create the same key twice; an unreadable key (lost Data Protection key ring) is skipped and replaced.
+- The portal Connections page shows a "passes the caller" badge and the `aud` value per server; older bridges get a warning.
+
+#### Still open (user access control)
+- Manual verification with `docker compose up --build`, a real claude.ai or Claude Code connection and the Playwright suite (`npm run e2e`), see the verification steps in the plan.
+- Follow-ups named in the plan: bulk invite and domain auto-join, SSO, group ids in tokens, cache invalidation across instances, works council/GDPR hint for the audit log.
+
 ### Not done / next
 - Real claude.ai verification with a public TLS URL (verification steps 5 and 6 of this plan) still needs a deployed instance.
 - Performance suite; platform-admin tooling. (Playwright smoke tests, audit log, password reset, email confirmation and installers are done, see "Post-MVP items".)

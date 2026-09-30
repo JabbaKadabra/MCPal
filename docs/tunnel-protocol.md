@@ -4,7 +4,7 @@ The bridge keeps one outbound SignalR connection to `<server>/hub/bridge` (WebSo
 
 ## Authentication
 
-`Authorization: Bearer mcpal_<company>_<secret>` on every request of the connection. Only API keys open tunnels; OAuth access tokens are rejected (`Tunnel` policy requires `AuthKind=apikey`). The company and the key come from the authenticated principal, never from a message. Access tokens in the query string are ignored.
+`Authorization: Bearer mcpal_<company>_<secret>` on every request of the connection. Only **bridge keys** (`purpose: bridge`) open tunnels. Personal access tokens (`403`) and OAuth access tokens are rejected (`Tunnel` policy requires `AuthKind=apikey` and `KeyPurpose=Bridge`). The company and the key come from the authenticated principal, never from a message. Access tokens in the query string are ignored.
 
 Revoking the key in the portal closes all tunnels that used it at once. Tunnels whose key expired or whose company was disabled are closed within a minute.
 
@@ -28,7 +28,7 @@ Rules enforced by the server:
 
 | Method | Payload | Result |
 |--------|---------|--------|
-| `CallTool` | `CallToolRequest { RequestId, ServerName, ToolName, ArgumentsJson, TraceParent? }` | `CallToolResponse { IsError, ContentJson, ErrorMessage, StructuredContentJson?, MetaJson? }` |
+| `CallTool` | `CallToolRequest { RequestId, ServerName, ToolName, ArgumentsJson, TraceParent?, User? }` | `CallToolResponse { IsError, ContentJson, ErrorMessage, StructuredContentJson?, MetaJson? }` |
 | `CancelCall` (1.1) | `requestId` (string) | none (fire and forget) |
 
 This is a SignalR client result (server invokes the client and awaits the answer). `TraceParent` (1.1) is the W3C `traceparent` of the server's `mcpal.tool_call` span; the bridge starts its `mcpal.local_call` span as a child, so one call is one trace. `ContentJson` is the serialized MCP `content` array. Since 1.1, `StructuredContentJson` carries the result's `structuredContent` and `MetaJson` its `_meta` (without the `serverInfo` entry the SDK stamps on every result, which describes the local server). The server drops either one with a warning when it is not valid JSON; the call still succeeds. All new fields are optional and default to null, so 1.0 bridges and servers interoperate. Calls run concurrently. The bridge limits each call to 110 s (`callTimeoutSeconds`), just below the server timeout (120 s, `Mcpal:ToolCallTimeoutSeconds`).
@@ -37,14 +37,23 @@ This is a SignalR client result (server invokes the client and awaits the answer
 
 After a call timeout on the bridge (`callTimeoutSeconds`), the bridge sends a ping to the local server and restarts the server only when the ping fails, so other calls on the same stdio process keep running.
 
+## Caller (1.2)
+
+`CallToolRequest.User` is a `UserContext { Token, UserId, Email?, Name?, Groups[], CompanyId, Company }`: who is calling. `Token` is a short-lived ES256 JWT signed by the MCPal server (verifiable with `GET /.well-known/jwks.json`); the other members repeat its claims. The server sends `User` only to bridges that announced protocol 1.2 or newer (like `CancelCall` for 1.1); older bridges get `null` and pass no caller on.
+
+The bridge hands it to the local MCP server in the `tools/call` request, `params._meta["eu.nordstein.mcp/user"]` = `{ token, sub, email, name, groups, companyId, company }` (stdio and HTTP), and, for HTTP servers with `userTokenHeader` in `mcpal.json`, in that request header (only with tool calls). **Strip rule:** the bridge builds the request itself and never forwards Claude's `_meta`; it also removes the `eu.nordstein.mcp/user` key before it sets its own. A server with `"userContext": false` gets neither. Token format, trust model and verification: [access-control.md](access-control.md). Local servers must fail closed when the caller is missing.
+
+The bridge can keep a copy of the JWKS for local servers without internet access: top-level `jwksFile` in `mcpal.json` (fetched at startup and hourly, replaced atomically).
+
 ## Versions
 
 | Version | Change |
 |---------|--------|
 | 1.0 | `Register`, `CallTool` |
 | 1.1 | `CancelCall`; structured content and output schemas; trace propagation |
+| 1.2 | `CallToolRequest.User`: the calling user as a signed token plus claims |
 
-Minor versions are additive. The server accepts every 1.x bridge, and a 1.1 bridge works against a 1.0 server (that server never sends `CancelCall`).
+Minor versions are additive. The server accepts every 1.x bridge, and a 1.1 bridge works against a 1.0 server (that server never sends `CancelCall`). A 1.2 bridge works against an older server (it never sends `User`, so local servers see no caller). A bridge older than 1.2 works against a 1.2 server, but its local servers get no caller: the portal marks such bridges.
 
 ## Failure behaviour
 

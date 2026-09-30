@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
+### Breaking (upgrade notes)
+- **Users, not keys, are the identity.** API keys are now **personal access tokens** (act as their user, work on `/mcp`) or **bridge keys** (company, tunnels only). Migration `UserBoundCredentials`: former `bridge` keys stay bridge keys; former `any` keys become **bridge keys** (so running tunnels keep working; they no longer work as bearer tokens on `/mcp`); former `client` keys become personal access tokens of the user who created them, and `client` keys without a creator are deleted. Per-key server lists (`AllowedServers`) are gone; use groups. Everyone who used a bearer key on `/mcp` needs a personal access token.
+- **OAuth sign-in is the portal login.** The sign-in page no longer accepts pasted API keys, and all OAuth tokens and codes were deleted: every Claude connection authorizes again. Claude users need an MCPal account (owners invite them).
+- **Bridges older than protocol 1.2** keep working but pass no caller to local servers; local servers that rely on the caller must refuse calls without one.
+- `Mcpal:DataProtectionPath` is now required in Production (it protects the signing keys of the caller tokens).
+- The audit log page and export are for owners only.
+
 ### Added
+- **Access control**: groups with grants (server glob plus tool globs), evaluated live per request. The built-in *Everyone* group (granted `* / *` for new and existing companies) keeps everything working until an owner narrows it; owners may use every tool. Forbidden tools are missing from `tools/list` and answer like unknown tools. Portal pages **Groups** (owners) and **My access**; users can be disabled and enabled, and the Users page shows groups and effective access.
+- **Caller identity for local MCP servers**: every tool call carries the user as a short-lived ES256 token (verifiable with `/.well-known/jwks.json`, keys rotate automatically) plus plain claims, in `_meta["eu.nordstein.mcp/user"]` and optionally in an HTTP header (`userTokenHeader`). Tunnel protocol 1.2. Bridge settings `userContext`, `userTokenHeader` and `jwksFile`. See `docs/access-control.md`.
+- The audit log records the user of each call and can be filtered and exported by user.
+- Display name for users (`PATCH /api/portal/auth/me`).
 - Release pipeline for tags `vX.Y.Z`: bridge archives for Linux (x64, arm64) and Windows (x64) with install scripts, checksums, a GitHub release and the server image on GHCR. Install scripts set up the bridge as a systemd or Windows service.
 - The Connections page shows the bridge version and, with `Mcpal:LatestBridgeVersion`, a hint for bridges that are older.
 - A bridge that is too old or too new for the server says so, points to the download and backs off to 15-minute checks instead of retrying every 30 seconds.

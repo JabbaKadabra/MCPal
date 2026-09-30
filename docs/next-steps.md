@@ -2,6 +2,8 @@
 
 This document describes ten improvements to MCPal after the MVP (phases 1–11 of `plan.md`). Each item is written so that an engineer can pick it up without further context: what the problem is today, the proposed design, the files to change, the tests to write and the acceptance criteria.
 
+> Note: item 8 (API key purposes and server restrictions) was superseded by user-bound credentials and groups: see `docs/access-control.md` and the "user access control" section in `plan.md`. Purposes are now `personal` and `bridge`, and `AllowedServers` no longer exists.
+
 Read `CLAUDE.md`, `plan.md` (sections "Security / tenant isolation rules" and "Status and handoff"), `docs/tunnel-protocol.md` and `docs/oauth.md` before starting.
 
 ## Ground rules for every item

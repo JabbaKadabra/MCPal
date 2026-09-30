@@ -10,7 +10,7 @@ claude.ai / Claude Code  ──HTTPS──►  MCPal.Server  ◄──outbound w
                                       portal, tunnel hub)              no inbound ports)
 ```
 
-Every company (tenant) sees only its own tools. Design and implementation plan: [plan.md](plan.md).
+Every company (tenant) sees only its own tools, and inside a company an owner decides which users may use which servers and tools. Local MCP servers learn who is calling. Design and implementation plan: [plan.md](plan.md); access control: [docs/access-control.md](docs/access-control.md).
 
 ## Quickstart (about 15 minutes)
 
@@ -24,7 +24,9 @@ For real use, put it behind TLS and set `Mcpal__PublicUrl` in `docker-compose.ym
 
 ### 2. Create your company and an API key
 
-Open the server URL, choose **Create account**, then **API keys → Create key**. The full key is shown once. Create two kinds of keys: a **bridge key** for `mcpal.json` (opens the tunnel, refused on `/mcp` and at the Claude sign-in, so a copy taken from a server is useless from Claude) and a **Claude key** that you paste when Claude asks you to sign in (refused on tunnels). A Claude key can be limited to some servers, so a team sees only `jira__*` tools, and can expire. Keys from earlier versions keep working for both.
+Open the server URL, choose **Create account** (you become the company's owner), then **API keys → Create key** with type **Bridge key**. The full key is shown once. A bridge key belongs to the company and only opens the tunnel: it is refused on `/mcp`, so a copy taken from a server is useless for calling tools. Colleagues get an account through **Users → Invite**; they sign in to Claude with it. Claude itself needs no key: it signs in with the MCPal account (OAuth). A **personal access token** (type "Personal access token") acts as its owner and is for tools that cannot do OAuth, e.g. Claude Code with a header.
+
+Everyone may use every tool at first. To restrict, open **Groups**: remove or narrow the grant of the built-in *Everyone* group and give groups their own grants (server and tool patterns). Owners may always use everything.
 
 ### 3. Start the bridge inside your network
 
@@ -59,6 +61,8 @@ Or run the binary directly. `mcpal.json` sits next to it (or is given with `--co
 }
 ```
 
+Local servers learn who is calling: the bridge puts the caller (a signed token plus claims) into `_meta["eu.nordstein.mcp/user"]` of every tool call. `"userTokenHeader": "Authorization"` on an HTTP server also sends the token in that header (with tool calls only), `"userContext": false` keeps a server from seeing callers, and `"jwksFile": "/etc/mcpal/jwks.json"` makes the bridge keep a copy of the server's public keys for servers without internet access. Servers must verify the token and refuse calls without a caller; see [docs/access-control.md](docs/access-control.md).
+
 ```bash
 export MCPAL_API_KEY=mcpal_…          # or set mcpal.apiKey in the file
 ./MCPal.Bridge check --config mcpal.json   # validate the config, start the servers, list their tools
@@ -75,8 +79,8 @@ The **Connections** page of the portal shows the bridge and its tools within sec
 
 ### 4. Connect Claude
 
-- **claude.ai** (Team/Enterprise: an Owner does this once): *Settings → Connectors → Add custom connector*, enter `https://<your-server>/mcp`, choose OAuth. On the sign-in page paste one of your API keys (or press **Connect as <company>** when you are signed in to the portal).
-- **Claude Code**: `claude mcp add --transport http mcpal https://<your-server>/mcp`, or without OAuth:
+- **claude.ai** (Team/Enterprise: an Owner adds the connector once, then **every member signs in individually**, so every Claude user needs an MCPal account): *Settings → Connectors → Add custom connector*, enter `https://<your-server>/mcp`, choose OAuth. Claude opens the MCPal sign-in page: sign in with your MCPal account and press **Connect as <email> (<company>)**. Claude then acts as you and sees only the tools you may use.
+- **Claude Code**: `claude mcp add --transport http mcpal https://<your-server>/mcp`, or without OAuth, with a personal access token:
   `claude mcp add --transport http mcpal https://<your-server>/mcp --header "Authorization: Bearer mcpal_…"`.
 
 Tools appear as `server__tool`, for example `kb__search`.
@@ -95,8 +99,8 @@ Grouped by what ships: `server/` becomes the container image, `bridge/` the bina
 | `bridge/packaging` | Publish and package scripts, Linux (systemd) and Windows service installers |
 | `shared/MCPal.Contracts` | Tunnel protocol DTOs and hub interfaces (no SDK dependency), used by server and bridge |
 | `tests/MCPal.E2E.Tests` | End-to-end tests: server host, real bridge, stdio test MCP server, SDK MCP client |
-| `tests/MCPal.TestMcpServer` | stdio MCP server used by the tests (`echo`, `add`, `slow`, `fail`, `crash`) |
-| `docs/` | [Tunnel protocol](docs/tunnel-protocol.md), [OAuth and authentication](docs/oauth.md) |
+| `tests/MCPal.TestMcpServer` | stdio MCP server used by the tests (`echo`, `add`, `slow`, `fail`, `crash`, `whoami`) |
+| `docs/` | [Tunnel protocol](docs/tunnel-protocol.md), [OAuth and authentication](docs/oauth.md), [Access control and caller identity](docs/access-control.md) |
 
 `MCPal.slnx` contains every project. `server/MCPal.Server.slnf` and `bridge/MCPal.Bridge.slnf` open just one side.
 
@@ -120,10 +124,12 @@ Configuration (environment variables use `__` for `:`):
 |---------|---------|---------|
 | `ConnectionStrings__Mcpal` | – | PostgreSQL connection string |
 | `Mcpal__PublicUrl` | `http://localhost:8080` | Public base URL, used in OAuth metadata and the MCP resource URL |
-| `Mcpal__DataProtectionPath` | – | Directory for Data Protection keys (mount a volume) |
+| `Mcpal__DataProtectionPath` | – | Directory for Data Protection keys (mount a volume). **Required in Production**: it protects the signing keys of the caller tokens |
+| `Mcpal__UserContext__TokenLifetimeSeconds` | 300 | Lifetime of the signed caller token that local servers receive (30 to 900) |
+| `Mcpal__UserContext__SigningKeyLifetimeDays` | 90 | How long a signing key signs before its successor takes over (7 to 365); successors are published 2 days ahead, retired keys stay in `/.well-known/jwks.json` for 7 days |
 | `Mcpal__ToolCallTimeoutSeconds` | 120 | Timeout of a relayed tool call |
 | `Mcpal__AccessTokenLifetimeMinutes` / `RefreshTokenLifetimeDays` | 60 / 30 | OAuth token lifetimes |
-| `Mcpal__McpRequestsPerMinute` | 600 | Rate limit on `/mcp` per API key (OAuth tokens count against the key they were issued from, else their company); requests without a valid credential share a limit per client IP |
+| `Mcpal__McpRequestsPerMinute` | 600 | Rate limit on `/mcp` per user (all their tokens share it); requests without a valid credential share a limit per client IP |
 | `Mcpal__AuditRetentionDays` / `AuditQueueCapacity` | 90 / 10000 | How long audit rows are kept; entries the audit writer holds in memory before it drops new ones |
 | `Mcpal__LatestBridgeVersion` | – | Version of the newest bridge release; older bridges get an "update available" hint in the portal |
 | `Mcpal__MigrateOnStartup` | true | Apply EF Core migrations at startup |
@@ -151,11 +157,15 @@ Set an SMTP server to send mail. Without `Mcpal__Smtp__Host` the mails, includin
 | `Mcpal__Smtp__From` | – | Sender address (required with a host) |
 | `Mcpal__Smtp__UseTls` | true | STARTTLS; turn off only for a local test server |
 
-A company can have several users. The user who signs up is an **owner**. Owners open **Users** in the portal to invite colleagues by email (the link works 7 days, one address can have one account), choose their role, cancel invitations and remove users. Removing a user revokes the Claude keys they created; keys for bridges stay, because running bridges use them. The last owner cannot be removed. **Members** see connections, the audit log and connect info and create Claude keys (purpose "client") for themselves; they see and revoke only their own keys. Owners see all keys and who created them.
+A company can have several users. The user who signs up is an **owner**. Owners open **Users** in the portal to invite colleagues by email (the link works 7 days, one address can have one account), choose their role, cancel invitations, **disable** and enable users, view what a user may use, and remove users. Disabling or removing a user ends their portal session and revokes their personal access tokens and OAuth tokens at once (enabling does not restore tokens); bridge keys stay, because running bridges use them. The last active owner cannot be disabled or removed. **Members** see connections and connect info, see what they may use (**My access**), set their display name and create personal access tokens for themselves; they see and revoke only their own. Owners see all keys, who they belong to, the audit log and the groups.
+
+### Access control
+
+Owners manage **Groups** in the portal. A group has members and grants; a grant allows the tools matching tool patterns of the servers matching a server pattern (`*` and `?` globs; server names ignore case, tool names do not). A user may use the union of the grants of all their groups, and the built-in group *Everyone* contains all users (new companies start with `* / *` on it). Owners may use every tool. A forbidden tool is missing from `tools/list` and answers like an unknown tool. Changes apply to the next request. Details, the caller token and how local servers verify it: [docs/access-control.md](docs/access-control.md).
 
 ### Audit log
 
-Every tool call through `/mcp` is written to the audit log of its company: time, duration, the API key or OAuth client that made it, bridge, server, tool and outcome (`ok`, `tool_error`, `timeout`, `offline`, `relay_error`, `cancelled`), plus a short error message. Arguments and results are not stored. The **Audit log** page of the portal filters by tool, outcome, key and time and exports CSV (up to 100 000 rows). The API is `GET /api/portal/audit` (keyset pagination with `cursor`) and `/api/portal/audit/export.csv`.
+Every tool call through `/mcp` is written to the audit log of its company: time, duration, the **user** who made it, the personal access token or OAuth client used, bridge, server, tool and outcome (`ok`, `tool_error`, `timeout`, `offline`, `relay_error`, `cancelled`), plus a short error message. Arguments and results are not stored. The **Audit log** page of the portal (owners only, because it names people) filters by user, tool, outcome, key and time and exports CSV (up to 100 000 rows). The API is `GET /api/portal/audit` (keyset pagination with `cursor`) and `/api/portal/audit/export.csv`.
 
 Rows are written in the background from a bounded queue (`Mcpal__AuditQueueCapacity`, default 10 000), so a slow database never slows a tool call; entries that do not fit are dropped and counted (`mcpal.audit.dropped`). `Mcpal__AuditRetentionDays` (default 90) deletes older rows hourly.
 
