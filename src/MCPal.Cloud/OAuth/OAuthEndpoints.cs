@@ -159,12 +159,11 @@ internal static class OAuthEndpoints
             query["client_id"], query["redirect_uri"], query["response_type"], query["code_challenge"],
             query["code_challenge_method"], query["state"], query["scope"], query["resource"]);
         var validation = await oauth.ValidateAuthorizeAsync(parameters, cancellationToken);
-        if (validation.Error is { } error)
+        if (validation.Request is not { } authorize)
         {
-            return Error(400, error.Error, error.Description);
+            return Error(400, validation.Error?.Error ?? "invalid_request", validation.Error?.Description ?? "Invalid request.");
         }
 
-        var authorize = validation.Request!;
         var signedIn = await SessionCompanyAsync(request.HttpContext, users, companies, cancellationToken);
         return Results.Json(new AuthorizeContextResponse(authorize.Client.ClientName, new Uri(authorize.RedirectUri).Host, signedIn?.Name));
     }
@@ -187,9 +186,9 @@ internal static class OAuthEndpoints
         var parameters = new AuthorizeParameters(
             body.ClientId, body.RedirectUri, body.ResponseType, body.CodeChallenge, body.CodeChallengeMethod, body.State, body.Scope, body.Resource);
         var validation = await oauth.ValidateAuthorizeAsync(parameters, cancellationToken);
-        if (validation.CanRedirect)
+        if (validation.CanRedirect && validation.RedirectUri is { } errorRedirect)
         {
-            return Results.Json(new RedirectResponse(BuildRedirect(validation.RedirectUri!, validation.State, error: validation.Error)));
+            return Results.Json(new RedirectResponse(BuildRedirect(errorRedirect, validation.State, error: validation.Error)));
         }
 
         if (validation.Request is not { } authorize)
