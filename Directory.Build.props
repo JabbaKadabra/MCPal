@@ -8,6 +8,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Logging perf rules (LoggerMessage delegates) are only worth it on hot paths; the MVP logs are low volume. -->
+    <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
     <Authors>Nordstein Software GmbH</Authors>
     <Product>MCPal</Product>
     <Copyright>Copyright (c) Nordstein Software GmbH. Licensed under the Elastic License 2.0.</Copyright>

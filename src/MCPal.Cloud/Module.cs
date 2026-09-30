@@ -2,6 +2,7 @@ using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using MCPal.Cloud.Storage;
 using MCPal.Cloud.Tenancy;
+using MCPal.Cloud.Tunnel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -40,6 +41,14 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
         }
 
         builder.Populate(services);
+
+        builder.RegisterType<ConnectionRegistry>().AsSelf().SingleInstance();
+        builder.RegisterType<TunnelTerminator>().As<IApiKeyRevocationListener>().SingleInstance();
+        if (registerWebServices)
+        {
+            builder.RegisterType<NullAccessTokenValidator>().As<IAccessTokenValidator>().InstancePerLifetimeScope();
+            builder.RegisterType<HubAgentInvoker>().As<IAgentInvoker>().SingleInstance();
+        }
 
         builder.RegisterType<ApiKeyService>().As<IApiKeyService>().InstancePerLifetimeScope();
         builder.RegisterType<CompanyService>().As<ICompanyService>().InstancePerLifetimeScope();
