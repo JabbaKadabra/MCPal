@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { t } from '../i18n';
 
@@ -15,7 +16,7 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('auth.forgot.title')}</h1>
       {forgot.isSuccess ? (
         <p role="status">{t('auth.forgot.done')}</p>
@@ -35,6 +36,6 @@ export function ForgotPasswordPage() {
       <p className="muted">
         <Link to="/login">{t('auth.forgot.back')}</Link>
       </p>
-    </main>
+    </AuthFrame>
   );
 }

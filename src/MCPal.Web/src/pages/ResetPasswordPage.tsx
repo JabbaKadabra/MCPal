@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { t } from '../i18n';
 
@@ -17,12 +18,12 @@ export function ResetPasswordPage() {
 
   if (email === null || token === null) {
     return (
-      <main className="card narrow">
+      <AuthFrame>
         <p role="alert">{t('auth.reset.invalidLink')}</p>
         <p>
           <Link to="/forgot-password">{t('auth.reset.askAgain')}</Link>
         </p>
-      </main>
+      </AuthFrame>
     );
   }
 
@@ -37,7 +38,7 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('auth.reset.title')}</h1>
       {reset.isSuccess ? (
         <>
@@ -61,6 +62,6 @@ export function ResetPasswordPage() {
           </button>
         </form>
       )}
-    </main>
+    </AuthFrame>
   );
 }

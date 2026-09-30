@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { ErrorText } from '../components/ErrorText';
+import { Tag } from '../components/Tag';
 import { t } from '../i18n';
 
 export function ConnectionsPage() {
@@ -11,22 +12,37 @@ export function ConnectionsPage() {
       <h1>{t('connections.title')}</h1>
       <p className="muted">{t('connections.intro')}</p>
       <ErrorText error={connections.error} />
-      {connections.data?.length === 0 && <p className="muted">{t('connections.empty')}</p>}
+      {connections.data?.length === 0 && <p className="empty">{t('connections.empty')}</p>}
       {connections.data?.map((connection, index) => (
-        <section className="card" key={`${connection.agentName}-${index}`}>
-          <h2>{connection.agentName}</h2>
-          <p className="muted">
-            {t('connections.version', { version: connection.agentVersion })} · {t('connections.since')} {new Date(connection.connectedAt).toLocaleString()}
-            {connection.apiKeyName !== null && ` · ${t('connections.key')} ${connection.apiKeyName}`}
+        <section className="card agent" key={`${connection.agentName}-${index}`}>
+          <header className="agent-head">
+            <h2>{connection.agentName}</h2>
+            <span className="led">{t('connections.online')}</span>
+            <Tag tone="plain">{t('connections.version', { version: connection.agentVersion })}</Tag>
+          </header>
+          <p className="agent-meta">
+            <span>
+              {t('connections.since')} {new Date(connection.connectedAt).toLocaleString()}
+            </span>
+            {connection.apiKeyName !== null && <span>{`${t('connections.key')} ${connection.apiKeyName}`}</span>}
           </p>
           {connection.updateAvailable && connection.latestAgentVersion !== null && (
             <p className="notice">{t('connections.update', { latest: connection.latestAgentVersion })}</p>
           )}
-          <ul>
+          <ul className="servers">
             {connection.servers.map((server) => (
-              <li key={server.name}>
-                <strong>{server.name}</strong> — {server.tools.length} {t('connections.tools')}
-                <div className="muted">{server.tools.join(', ')}</div>
+              <li key={server.name} className="server">
+                <div className="server-head">
+                  <strong>{server.name}</strong>
+                  <Tag tone="agent">{`${server.tools.length} ${t('connections.tools')}`}</Tag>
+                </div>
+                <ul className="tools">
+                  {server.tools.map((tool) => (
+                    <li key={tool}>
+                      <code>{tool}</code>
+                    </li>
+                  ))}
+                </ul>
               </li>
             ))}
           </ul>
@@ -34,12 +50,12 @@ export function ConnectionsPage() {
             <ul className="errors">
               {connection.rejected.map((rejected) => (
                 <li key={rejected.server}>
-                  {t('connections.rejected')}: {rejected.server} — {rejected.reason}
+                  <strong>{t('connections.rejected')}</strong> {`${rejected.server} — ${rejected.reason}`}
                 </li>
               ))}
               {connection.rejectedTools.map((rejected) => (
                 <li key={`${rejected.server}/${rejected.tool}`}>
-                  {t('connections.rejectedTool')}: {`${rejected.server} / ${rejected.tool}`} — {rejected.reason}
+                  <strong>{t('connections.rejectedTool')}</strong> {`${rejected.server} / ${rejected.tool} — ${rejected.reason}`}
                 </li>
               ))}
             </ul>

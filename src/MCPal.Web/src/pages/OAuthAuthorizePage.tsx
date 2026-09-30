@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { buildAuthorizeBody, buildDenyUrl, parseAuthorizeParams } from '../oauth/authorizeParams';
 import { t } from '../i18n';
@@ -30,13 +31,17 @@ export function OAuthAuthorizePage() {
 
   if (params === null || context.isError) {
     return (
-      <main className="card narrow">
+      <AuthFrame>
         <p role="alert">{context.error instanceof ApiError ? context.error.message : t('oauth.invalidRequest')}</p>
-      </main>
+      </AuthFrame>
     );
   }
   if (context.data === undefined) {
-    return <p className="center muted">{t('common.loading')}</p>;
+    return (
+      <AuthFrame>
+        <p className="muted">{t('common.loading')}</p>
+      </AuthFrame>
+    );
   }
 
   const { clientName, redirectHost, signedInCompany } = context.data;
@@ -49,16 +54,16 @@ export function OAuthAuthorizePage() {
   const keyRejected = authorize.error instanceof ApiError && authorize.error.code === 'invalid_key';
 
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('oauth.title', { client: clientName })}</h1>
       <p className="muted">{t('oauth.redirectNote', { host: redirectHost })}</p>
 
       {signedInCompany !== null && (
         <>
-          <button type="button" onClick={() => authorize.mutate({ useSession: true })} disabled={authorize.isPending}>
+          <button type="button" className="wide" onClick={() => authorize.mutate({ useSession: true })} disabled={authorize.isPending}>
             {t('oauth.signedIn', { company: signedInCompany })}
           </button>
-          <p className="muted center">{t('oauth.or')}</p>
+          <p className="divider">{t('oauth.or')}</p>
         </>
       )}
 
@@ -84,6 +89,6 @@ export function OAuthAuthorizePage() {
           </button>
         </div>
       </form>
-    </main>
+    </AuthFrame>
   );
 }

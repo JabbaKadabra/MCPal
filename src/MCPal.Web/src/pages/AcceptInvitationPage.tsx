@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { meQueryKey } from '../components/useMe';
 import { t, type MessageKey } from '../i18n';
@@ -31,20 +32,24 @@ export function AcceptInvitationPage() {
 
   if (token === null) {
     return (
-      <main className="card narrow">
+      <AuthFrame>
         <p role="alert">{t('invitation.invalidLink')}</p>
-      </main>
+      </AuthFrame>
     );
   }
   if (preview.isError) {
     return (
-      <main className="card narrow">
+      <AuthFrame>
         <ErrorText error={preview.error} />
-      </main>
+      </AuthFrame>
     );
   }
   if (preview.data === undefined) {
-    return <p className="center muted">{t('common.loading')}</p>;
+    return (
+      <AuthFrame>
+        <p className="muted">{t('common.loading')}</p>
+      </AuthFrame>
+    );
   }
 
   function submit(event: FormEvent) {
@@ -59,7 +64,7 @@ export function AcceptInvitationPage() {
 
   const { companyName, email, role } = preview.data;
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('invitation.title', { company: companyName })}</h1>
       <p className="muted">{t('invitation.intro', { role: t(`users.role.${role}` satisfies MessageKey), email })}</p>
       <p>
@@ -80,6 +85,6 @@ export function AcceptInvitationPage() {
           {t('invitation.submit')}
         </button>
       </form>
-    </main>
+    </AuthFrame>
   );
 }

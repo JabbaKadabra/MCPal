@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { t } from '../i18n';
 
@@ -22,7 +23,7 @@ export function ConfirmEmailPage() {
   }, [userId, token, mutate]);
 
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('auth.confirm.title')}</h1>
       {(userId === null || token === null) && <p role="alert">{t('auth.confirm.invalidLink')}</p>}
       {confirm.isPending && <p className="muted">{t('auth.confirm.working')}</p>}
@@ -31,6 +32,6 @@ export function ConfirmEmailPage() {
       <p>
         <Link to="/login">{t('auth.signIn')}</Link>
       </p>
-    </main>
+    </AuthFrame>
   );
 }

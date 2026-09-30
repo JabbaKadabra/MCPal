@@ -6,7 +6,7 @@ export function CopyButton({ value }: { value: string }) {
   return (
     <button
       type="button"
-      className="ghost"
+      className="ghost small"
       onClick={() => {
         void navigator.clipboard.writeText(value).then(() => setCopied(true));
       }}

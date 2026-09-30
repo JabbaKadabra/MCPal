@@ -6,7 +6,7 @@ import { t } from '../i18n';
 
 function Snippet({ value }: { value: string }) {
   return (
-    <div className="row snippet">
+    <div className="snippet">
       <code>{value}</code>
       <CopyButton value={value} />
     </div>
@@ -22,7 +22,7 @@ export function ConnectPage() {
       <ErrorText error={info.error} />
       {info.data !== undefined && (
         <>
-          <ol>
+          <ol className="steps">
             <li>{t('connect.step1')}</li>
             <li>
               {t('connect.step2')}
@@ -30,7 +30,7 @@ export function ConnectPage() {
             </li>
             <li>{t('connect.step3')}</li>
           </ol>
-          <p className="muted">{t('connect.keys')}</p>
+          <p className="notice">{t('connect.keys')}</p>
           <h2>{t('connect.header.title')}</h2>
           <p>{t('connect.header.body')}</p>
           <h2>{t('connect.code.title')}</h2>

@@ -1,5 +1,6 @@
 export const en = {
   'app.name': 'MCPal',
+  'app.tagline': 'Claude reaches the MCP servers inside your network through an agent that dials out. No inbound ports, no VPN.',
   'nav.keys': 'API keys',
   'nav.connections': 'Connections',
   'nav.users': 'Users',
@@ -88,6 +89,7 @@ export const en = {
   'connections.since': 'connected since',
   'connections.key': 'key',
   'connections.tools': 'tools',
+  'connections.online': 'Online',
   'connections.rejected': 'Rejected',
   'connections.rejectedTool': 'Tool not exposed',
   'audit.title': 'Audit log',

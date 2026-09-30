@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { t } from '../i18n';
+import { Brand } from './Brand';
 import { meQueryKey, useMe } from './useMe';
 
 export function Layout() {
@@ -20,7 +21,9 @@ export function Layout() {
   return (
     <div className="shell">
       <header className="topbar">
-        <strong className="brand">{t('app.name')}</strong>
+        <Link to="/keys" className="topbar-home">
+          <Brand />
+        </Link>
         <nav aria-label="Main">
           <NavLink to="/keys">{t('nav.keys')}</NavLink>
           <NavLink to="/connections">{t('nav.connections')}</NavLink>
@@ -29,11 +32,12 @@ export function Layout() {
           <NavLink to="/connect">{t('nav.connect')}</NavLink>
         </nav>
         <span className="spacer" />
-        <span className="muted who">{me.data?.companyName}</span>
-        <button type="button" className="ghost" onClick={() => signOut.mutate()}>
+        <span className="who">{me.data?.companyName}</span>
+        <button type="button" className="ghost on-dark" onClick={() => signOut.mutate()}>
           {t('nav.signOut')}
         </button>
       </header>
+      <div className="cable" aria-hidden="true" />
       <main className="content">
         <Outlet />
       </main>

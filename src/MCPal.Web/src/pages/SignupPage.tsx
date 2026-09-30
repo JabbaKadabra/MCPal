@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { meQueryKey } from '../components/useMe';
 import { t } from '../i18n';
@@ -26,7 +27,7 @@ export function SignupPage() {
   }
 
   return (
-    <main className="card narrow">
+    <AuthFrame>
       <h1>{t('auth.signup.title')}</h1>
       <form onSubmit={submit}>
         <label>
@@ -56,6 +57,6 @@ export function SignupPage() {
       <p className="muted">
         {t('auth.signup.haveAccount')} <Link to="/login">{t('auth.login.submit')}</Link>
       </p>
-    </main>
+    </AuthFrame>
   );
 }
