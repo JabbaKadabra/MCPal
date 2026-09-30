@@ -1,4 +1,4 @@
-using System.IO.Enumeration;
+using MCPal.Contracts;
 
 namespace MCPal.Bridge.Local;
 
@@ -18,5 +18,5 @@ internal sealed class ToolFilter(IReadOnlyList<string> includes, IReadOnlyList<s
     }
 
     private static bool Matches(string pattern, string toolName) =>
-        FileSystemName.MatchesSimpleExpression(pattern, toolName, ignoreCase: false);
+        ToolPattern.Matches(pattern, toolName, ignoreCase: false);
 }
