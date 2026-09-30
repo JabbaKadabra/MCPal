@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <UserSecretsId>dotnet-MCPal.Agent-49894ef5-5513-42c0-96b5-4c37557bd594</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MCPal.Agent.Tests" />
+    <InternalsVisibleTo Include="MCPal.E2E.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Autofac" />
+    <PackageReference Include="Autofac.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MCPal.Contracts\MCPal.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

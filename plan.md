@@ -1,0 +1,249 @@
+# MCPal — reverse-tunnel MCP relay: design spec + implementation plan
+
+Date: 2026-09-29, updated 2026-09-30. Status: design approved in brainstorming (sections 1–9, with "Agent" entity dropped in favour of API-key-authenticated tunnels). **Phase 1 (scaffold) done, not yet committed.** See [Status and handoff](#status-and-handoff) at the end for the next steps.
+
+## Context
+
+Companies have internal knowledge bases reachable as MCP servers (stdio or HTTP) or as Claude skills. To use them from claude.ai (web/Desktop/mobile/Cowork) the MCP server must be reachable **inbound** from Anthropic's egress range (`160.79.104.0/21`). An inbound public port is a KO criterion for many companies.
+
+MCPal removes the inbound requirement: the company runs a small **agent** process that opens an **outbound** persistent connection to the MCPal cloud. The cloud exposes one public MCP endpoint. claude.ai talks to the cloud; the cloud forwards tool calls over the tunnel to the agent, which calls the local MCP servers. Zero inbound ports, zero changes to existing MCP servers.
+
+Success: a company registers, creates an API key, drops its existing `mcpServers` config block into `mcpal.json`, starts the agent, adds one custom connector in claude.ai, and sees only its own tools. Setup under 15 minutes. **Data isolation between companies is a hard requirement.**
+
+Research findings that shaped the design (official docs, verified 2026-09-29):
+- claude.ai custom connectors: OAuth (DCR/CIMD, PKCE S256) supported by default. Static request headers (`static_headers`, e.g. `Authorization: Bearer …`) are **beta, limited to some organizations**. ⇒ we must offer OAuth; bearer API key is a fallback. Source: https://claude.com/docs/connectors/building/authentication
+- OAuth: 401 with `WWW-Authenticate: Bearer resource_metadata="…"` starts sign-in; RFC 9728 + RFC 8414 metadata; token endpoint must accept form-urlencoded; discovery/token ≤10 s, refresh ≤30 s; bad refresh → `invalid_grant`; redirect URIs `https://claude.ai/api/mcp/auth_callback` and loopback (any port, `localhost` and `127.0.0.1`) for Claude Code.
+- Team/Enterprise: only Owners add custom connectors; members connect individually.
+- OpenIddict has no DCR yet (issue #2404, planned 8.0 preview) ⇒ build a minimal OAuth 2.1 AS ourselves.
+- ModelContextProtocol C# SDK: latest stable **2.2.0** (net8/9/10). `HttpServerTransportOptions.Stateless`, `ConfigureSessionOptions` (runs per request in stateless mode → per-tenant handlers), `McpServerOptions.Handlers.ListToolsHandler/CallToolHandler`, MCP auth extension (`AddMcp` on `AuthenticationBuilder`, `McpAuthenticationOptions.ResourceMetadata`) emitting the 401 challenge. Client: `McpClient.CreateAsync`, `StdioClientTransport(StdioClientTransportOptions)`, `HttpClientTransport(HttpClientTransportOptions)`, `ListToolsAsync`, `CallToolAsync`, `NotificationMethods.ToolListChangedNotification`. (Names verified on 1.2.0 XML docs; re-verify against 2.2.0 when starting — v2 made stateless the default and renamed some members.)
+- SignalR: server→client invocation with result (`ISingleClientProxy.InvokeAsync<T>` / typed `IHubContext<THub, T>` with `Task<T>` methods) exists since .NET 7; works only when the caller runs on the instance holding the connection ⇒ fine for single-instance MVP.
+- Existing repo `Translogica.AI.Agents` (not reused, standalone decision) is a useful reference: its `docs/cloud-mcp-tools.md` / `docs/api-authentication.md` document pitfalls (plaintext API keys — we hash; tool exceptions must surface `Message` only; rate limiting the MCP path because MCP middleware short-circuits the pipeline).
+
+## Decisions (from brainstorming)
+
+| Topic | Decision |
+|---|---|
+| Product / repo | **MCPal**, standalone repo at `/home/jabba/MCPal`, remote `github.com/JabbaKadabra/MCPal`, branch `main` |
+| Stack | All .NET 10: ASP.NET Core cloud, .NET worker agent |
+| DI container | **Autofac** (decided 2026-09-30). One `Module` subclass per project in `Module.cs` (`CloudModule`, `AgentModule`); hosts use `AutofacServiceProviderFactory` and register only the module. |
+| Project layout | **Plan layout** (decided 2026-09-30): one `MCPal.Cloud` project with feature folders, no onion split into Domain/Application/Storage projects. Nordstein C# conventions apply otherwise (see below). |
+| Package versions | Central package management in `Directory.Packages.props`; `PackageReference` items carry no version. |
+| Tests | NUnit 5 + NSubstitute + AwesomeAssertions (`x.Should()…`), global usings set in each test csproj. Integration via `Microsoft.AspNetCore.Mvc.Testing` `WebApplicationFactory<Program>`. |
+| License | Elastic License 2.0 (`LICENSE`, `PackageLicenseExpression=Elastic-2.0`) |
+| Tunnel | SignalR (WebSockets + SSE/long-poll fallback → corporate-proxy friendly, auto-reconnect) |
+| Relay model | **Tool-level**: cloud is the MCP server, agent is an MCP client; tunnel carries `Register/ToolsChanged` + `CallTool` |
+| Tenancy | Company = tenant; many tunnels, many API keys |
+| Credential | **One credential type: API key.** Used both by the agent (tunnel) and by Claude (bearer / OAuth login). No scopes, no Agent entity. |
+| Auth to Claude | OAuth 2.1 AS built in (DCR, PKCE) **plus** bearer API key fallback |
+| Onboarding | Minimal web portal as **React SPA** (Vite + TypeScript) on a JSON API; ASP.NET Identity (cookie) behind it |
+| DB | EF Core + PostgreSQL (Testcontainers for tests) |
+| Hosting | Docker, Linux, single instance for MVP (scale-out later) |
+| Out of scope | Skill→MCP generator (sub-project 3), backplane/scale-out, MCP resources/prompts, CIMD, installer packaging, billing |
+
+## Architecture
+
+```
+claude.ai / Claude Code                     Company network (no inbound ports)
+   │  HTTPS  streamable HTTP (stateless)        ┌──────────────────────────────┐
+   ▼                                            │  MCPal.Agent                 │
+┌──────────────────────── MCPal.Cloud ───────┐  │   ├ McpClient(stdio) ─► kb   │
+│ /mcp  (MCP server, per-tenant handlers)    │  │   ├ McpClient(http)  ─► wiki │
+│ /oauth/*, /.well-known/*  (OAuth 2.1 AS)   │  │   └ SignalR client ──────────┼──► outbound wss
+│ /hub/agent (SignalR hub, API-key auth) ◄───┼──┘                              │
+│ /api/portal/* JSON (Identity cookie)       │
+│ /  React SPA static files (wwwroot)        │
+│ ConnectionRegistry (in-memory, per company)│
+│ EF Core → PostgreSQL                       │
+└────────────────────────────────────────────┘
+```
+
+Call flow `tools/call`: Claude → `POST /mcp` → McpBearer auth → `CompanyId` claim → `ConnectionRegistry[company]` finds the connection owning `server` → `hub.Clients.Single(connId).InvokeAsync<CallToolResponse>(…)` with timeout → agent `McpClient.CallToolAsync` → local server → response back as `CallToolResult`.
+
+Call flow `tools/list`: served from the registry cache; no round trip.
+
+## Repo layout
+
+```
+MCPal/
+  MCPal.sln                        (solution folders src/, tests/)
+  Directory.Build.props            (net10.0, nullable, warnings-as-errors, LangVersion latest, AnalysisLevel latest-recommended,
+                                    EnforceCodeStyleInBuild, ImplicitUsings; *.Tests projects get IsTestProject)
+  Directory.Packages.props         (central package versions)
+  LICENSE                          (Elastic License 2.0)
+  .dockerignore, .gitignore        (.gitignore also ignores src/MCPal.Cloud/wwwroot/ and mcpal.json)
+  src/MCPal.Contracts/             tunnel DTOs + hub interfaces; no SDK dependency
+  src/MCPal.Cloud/                 ASP.NET Core
+     Tenancy/      Company, ApiKey, ApiKeyService (hash/validate), McpBearer auth scheme
+     Tunnel/       AgentHub, ApiKeyTunnelAuthHandler, ConnectionRegistry, ToolNaming
+     Mcp/          McpEndpoint (MapMcp config), TenantToolHandlers, CallRelay, rate limiting
+     OAuth/        metadata endpoints, DCR, authorize (JSON API for the SPA page), token, stores
+     Portal/       minimal-API JSON endpoints: auth (signup/login/logout/me), keys, connections
+     Storage/      MCPalDbContext, entities, migrations
+     wwwroot/      built SPA output (copied by MCPal.Web build; SPA fallback to index.html)
+     Program.cs, Module.cs (Autofac CloudModule), appsettings.json, Dockerfile (build context = repo root)
+  src/MCPal.Web/                   React + TypeScript + Vite SPA (portal + OAuth authorize page)
+     src/pages/ (Signup, Login, Keys, Connections, Connect, OAuthAuthorize), src/api/ (typed fetch client)
+     vite.config.ts (dev proxy → cloud on :8080), package.json
+  src/MCPal.Agent/                 worker: Config/, Local/ (McpClient per server), Tunnel/ (SignalR client), Program.cs, Module.cs (Autofac AgentModule)
+  tests/MCPal.Cloud.Tests/         unit + WebApplicationFactory integration (Testcontainers Postgres)
+  tests/MCPal.Agent.Tests/         config parsing, local server manager, tunnel client (fake hub)
+  tests/MCPal.E2E.Tests/           cloud host + in-process agent + TestMcpServer + real SDK McpClient
+  tests/MCPal.TestMcpServer/       stdio MCP server (SDK) with `echo`, `add`, `slow`, `fail` tools
+  docker-compose.yml               cloud + postgres
+  docs/superpowers/specs/2026-09-29-mcpal-design.md   (copy of this spec, committed first)
+  README.md
+```
+
+## Components
+
+### MCPal.Contracts (tunnel protocol)
+- `IAgentHubClient` (cloud → agent, result-returning): `Task<CallToolResponse> CallTool(CallToolRequest request)`.
+- Hub methods (agent → cloud): `Task<RegisterResult> Register(AgentCatalog catalog)`, `Task ToolsChanged(AgentCatalog catalog)`.
+- DTOs (records, System.Text.Json): `AgentCatalog { AgentName, AgentVersion, ServerCatalog[] Servers }`, `ServerCatalog { Name, ToolDescriptor[] Tools }`, `ToolDescriptor { Name, Title?, Description?, InputSchemaJson (string), AnnotationsJson? }`, `CallToolRequest { RequestId, ServerName, ToolName, ArgumentsJson }`, `CallToolResponse { IsError, ContentJson /* serialized CallToolResult */, ErrorMessage? }`, `RegisterResult { Accepted, RejectedServers[] with reason }`.
+- Schema/content travel as JSON strings so Contracts stays SDK-free and SignalR serialization stays trivial.
+- `ProtocolVersion` constant sent in `Register`; cloud rejects unknown majors with a clear message.
+
+### MCPal.Cloud / Tenancy
+- Entities: `Company { Id, Name, Slug, CreatedAt, Disabled }`, `ApiKey { Id, CompanyId, Name, Prefix, KeyHash, CreatedAt, ExpiresAt?, Disabled, LastUsedAt? }`, `PortalUser : IdentityUser { CompanyId }`.
+- Key format `mcpal_<8 char company short id>_<40 random [A-Za-z0-9]>` from `RandomNumberGenerator`; stored SHA-256 (`KeyHash`), `Prefix` = first 14 chars for display. Shown once.
+- `IApiKeyService.ValidateAsync(rawKey) → ValidatedKey { CompanyId, ApiKeyId } | null` (checks hash, Disabled, ExpiresAt, company Disabled; updates LastUsedAt throttled).
+- `McpBearerAuthenticationHandler` (scheme `McpBearer`): reads only `Authorization: Bearer`; value starting with `mcpal_` → API key path; otherwise → OAuth access-token path. Principal claims: `CompanyId`, `ApiKeyId`, `AuthKind` (`apikey`|`oauth`). Never read tokens from query string.
+- Revoking a key: disables tunnels authenticated with it (registry drops them, hub aborts connections) and invalidates OAuth tokens bound to it.
+
+### MCPal.Cloud / Tunnel
+- `AgentHub : Hub<IAgentHubClient>` at `/hub/agent`, `[Authorize(AuthenticationSchemes = "McpBearer")]`. Company/key come from the principal, **never** from the payload.
+- `ConnectionRegistry` (singleton): `CompanyId → { ConnectionId → ConnectionInfo { AgentName, ApiKeyId, ConnectedAt, Servers: Dictionary<serverName, ToolDescriptor[]> } }` plus `CompanyId → serverName → ConnectionId` index. Thread-safe; `OnDisconnectedAsync` removes.
+- Server names unique per company: `Register` rejects servers whose name is held by another live connection (`RejectedServers`), accepts the rest. Same connection re-registering replaces its own entries.
+- SignalR options: `MaximumReceiveMessageSize = 10 MB`, `ClientTimeoutInterval = 60 s`, `KeepAliveInterval = 15 s`, JSON protocol.
+- `ToolNaming.Public(server, tool)` = `sanitize(server) + "__" + sanitize(tool)`, sanitize → `[A-Za-z0-9_-]`, total ≤ 64 chars (truncate + 6-char hash suffix when needed); `TryParse(publicName)` via registry map (store the mapping at registration instead of parsing).
+
+### MCPal.Cloud / Mcp
+- `MapMcp("/mcp")`, `Stateless = true`, `RequireAuthorization("McpBearer")`, `AddMcp` authentication with `ResourceMetadata` (`resource = https://<PublicUrl>/mcp`, `authorization_servers = [https://<PublicUrl>]`, `scopes_supported = ["mcp"]`, `bearer_methods_supported = ["header"]`).
+- `ConfigureSessionOptions`: reads `CompanyId` from `HttpContext.User`, sets `ServerInfo`, `Capabilities.Tools` (no list_changed in stateless mode), `Handlers.ListToolsHandler` = registry snapshot mapped to `Tool` (name = public name, `InputSchema` parsed from JSON string, description prefixed with `[server]`), `Handlers.CallToolHandler` = `CallRelay.CallAsync(company, publicName, args, ct)`.
+- `CallRelay`: resolves public name → (connectionId, server, tool); missing → `CallToolResult { IsError, "Tool not available (agent offline)" }`; invokes hub with `Mcpal:ToolCallTimeoutSeconds` (default 120) linked to request cancellation; maps `CallToolResponse` → `CallToolResult` (deserialize `ContentJson`); exceptions → `IsError` with safe message, full detail logged with CompanyId/connectionId.
+- Rate limiting: partitioned fixed window per bearer-token hash on `/mcp` only (`app.UseRateLimiter()` before `MapMcp`).
+- `ServerInstructions`: short text telling the model tools are grouped by `server__tool`.
+
+### MCPal.Cloud / OAuth (minimal OAuth 2.1 AS)
+- Endpoints: `GET /.well-known/oauth-protected-resource/mcp` (handled by SDK auth extension or our own minimal endpoint), `GET /.well-known/oauth-authorization-server` (issuer = PublicUrl, `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `response_types_supported=["code"]`, `grant_types_supported=["authorization_code","refresh_token"]`, `code_challenge_methods_supported=["S256"]`, `token_endpoint_auth_methods_supported=["none"]`, `scopes_supported=["mcp"]`).
+- `POST /oauth/register` (RFC 7591): accept `redirect_uris`, `client_name`, `token_endpoint_auth_method=none`; validate each redirect URI against allowlist (`https://claude.ai/api/mcp/auth_callback`, and `http://localhost/*` / `http://127.0.0.1/*` with any port); persist `OAuthClient { ClientId (random), RedirectUris[], ClientName, CreatedAt }`; return 201 JSON. No secret (public client).
+- `GET /oauth/authorize?…` is served by the SPA (fallback `index.html`, React route `OAuthAuthorize`). The page calls `GET /api/oauth/authorize/context?<same query>` which validates `client_id`, `redirect_uri` (exact match or loopback port-agnostic), `response_type=code`, `code_challenge` + `code_challenge_method=S256` (required), `state`, `resource` (must equal `<PublicUrl>/mcp` when present), `scope`, and returns `{ clientName, signedInCompany? }` or an error. The page shows connector name + form: **paste API key** (primary) or, when a portal user is signed in, a "Connect as <company>" button; submits `POST /api/oauth/authorize` (JSON, anti-forgery) which on success creates `AuthorizationCode { Code (random, hashed), ClientId, CompanyId, ApiKeyId?, RedirectUri, CodeChallenge, Scope, Resource, ExpiresAt = +5 min, Used }` and returns `{ redirectUrl }` (redirect URI + `code` + `state`); the SPA navigates there. Errors → `{ redirectUrl }` with `error=…` when the redirect URI is valid, else an error payload the page renders.
+- `POST /oauth/token` (form-urlencoded only): `authorization_code` → verify code (single use, not expired, client matches, redirect_uri matches, PKCE `S256(code_verifier) == code_challenge`) → issue `access_token` (opaque random, hashed, 1 h) + `refresh_token` (opaque, hashed, 30 d) stored as `OAuthToken { Hash, Kind, CompanyId, ApiKeyId?, ClientId, ExpiresAt, Revoked }`; `refresh_token` → rotate (old revoked, new pair returned); invalid/expired/revoked refresh → `400 {"error":"invalid_grant"}`. JSON response `token_type=Bearer`, `expires_in`, `scope`. Must answer fast (single DB round trip).
+- Background cleanup job removes expired codes/tokens daily.
+
+### MCPal.Cloud / Portal API (minimal APIs + ASP.NET Identity) and MCPal.Web (React SPA)
+- JSON API under `/api/portal` (cookie auth, `[Authorize]`, anti-forgery header for mutating calls): `POST auth/signup` (company name + admin email/password → Company + PortalUser + sign-in), `POST auth/login`, `POST auth/logout`, `GET auth/me`, `GET keys`, `POST keys` (returns raw key once), `DELETE keys/{id}` (revoke), `GET connections` (live from registry: agent name, connected since, servers + tool counts, rejected servers), `GET connect-info` (public MCP URL, issuer, Claude Code command). Unauthenticated → 401 JSON (no redirect), SPA routes to login.
+- SPA (`MCPal.Web`): React 19 + TypeScript + Vite + React Router; pages Signup, Login, Keys (create → key shown once with copy, revoke), Connections (auto-refresh every 5 s), Connect (instructions: "Add custom connector → OAuth → paste key", header fallback if org has beta, `claude mcp add --transport http mcpal <url>/mcp`), OAuthAuthorize (see OAuth). Typed fetch client, no state library beyond React Query. Styling: plain CSS modules (design system decided later; optional `translogica-design-system` skill if branded).
+- Build: `MCPal.Web` `npm run build` → `dist/` copied into `MCPal.Cloud/wwwroot` by the Cloud csproj (MSBuild target before publish; Dockerfile has a node build stage). Dev: `vite` on :5173 proxying `/api`, `/oauth`, `/mcp`, `/hub` to :8080. Cloud serves static files + `MapFallbackToFile("index.html")` for non-API routes.
+- Identity cookies only for the portal API; `/mcp` and `/hub/agent` use `McpBearer` exclusively. Cookie `SameSite=Lax`, `HttpOnly`. Data Protection keys persisted to a volume (`Mcpal:DataProtectionPath`).
+- Tests: API integration tests (WebApplicationFactory); SPA gets Vitest unit tests for the API client + authorize page logic; Playwright smoke later (out of MVP).
+- No platform-admin UI in MVP; operator uses DB/`dotnet` migration commands.
+
+### MCPal.Agent
+- Config `mcpal.json` (path via `--config`, default next to exe):
+  ```json
+  {
+    "cloud": { "url": "https://mcpal.example.com", "apiKey": "mcpal_…", "agentName": "hq-01" },
+    "mcpServers": {
+      "kb":   { "command": "npx", "args": ["-y", "@acme/kb-mcp"], "env": { "KB_TOKEN": "…" } },
+      "wiki": { "url": "http://intranet:8080/mcp", "headers": { "Authorization": "Bearer …" } }
+    }
+  }
+  ```
+  `mcpServers` shape = claude_desktop_config / Claude Code format (copy-paste). `MCPAL_API_KEY` env var overrides `cloud.apiKey`.
+- `LocalServerManager`: one `LocalServer` per entry; `McpClient.CreateAsync` with `StdioClientTransport` or `HttpClientTransport` (StreamableHttp, auto-detect SSE); lazy start on first use or at startup (configurable), retry with backoff on failure; subscribes to `tools/list_changed` → refresh catalog → `ToolsChanged`; dead client → dispose + recreate on next call; every failure becomes a `CallToolResponse { IsError }`, never a crash.
+- `TunnelClient`: `HubConnectionBuilder.WithUrl(url + "/hub/agent", o => o.Headers["Authorization"] = "Bearer " + key).WithAutomaticReconnect(backoff 1s..60s)`; on `Connected`/`Reconnected` → `Register(catalog)`; handles `CallTool` by dispatching to `LocalServerManager` (concurrent calls allowed; per-call timeout slightly below the cloud's); logs `RejectedServers` loudly.
+- Hosting: `Host.CreateApplicationBuilder`, `UseWindowsService()` + `UseSystemd()`; CLI verbs `run` (default), `check` (validate config, start local servers, print tool list, exit). Publish single-file self-contained `win-x64` and `linux-x64`.
+- Logging: console + rolling file (Microsoft.Extensions.Logging + simple file provider or Serilog).
+
+### Security / tenant isolation rules (enforced + tested)
+1. `CompanyId` only ever comes from an authenticated principal (API key or OAuth token), never from URL, body, or hub payload.
+2. Registry is keyed by `CompanyId` first; every lookup starts from the caller's company. There is no cross-company enumeration API.
+3. Public tool names are resolved through the caller's company map only; a name from another company → "tool not found".
+4. Secrets (API keys, codes, tokens) stored hashed; shown once.
+5. Tool errors return `ex.Message`-style safe text only; stack traces stay in logs.
+6. Access tokens never accepted via query string. Loopback redirect only for registered clients.
+7. Revoking a key kills its tunnels and tokens.
+
+### Error handling summary
+| Situation | Behaviour |
+|---|---|
+| Agent offline | its tools vanish from `tools/list`; call → `IsError` "agent offline" |
+| Duplicate server name in company | second registration rejected for that server, logged, shown in portal |
+| Tool call timeout | `IsError` "timed out after N s" |
+| Local MCP crash | agent returns `IsError`, recreates client on next call |
+| Invalid/expired key or token | 401 with `WWW-Authenticate` resource metadata |
+| Bad refresh token | `400 invalid_grant` |
+| Rate limit | 429 |
+
+## Implementation plan (phases; each ends green + committed)
+
+1. ✅ **Scaffold** (done 2026-09-30, uncommitted) — repo, solution, `Directory.Build.props`, projects, `docker-compose.yml`, spec copied to `docs/superpowers/specs/`, README stub. CI-less for now.
+2. **Contracts + ToolNaming** — DTOs, hub interface, naming/sanitizing with unit tests.
+3. **Storage + Tenancy** — `MCPalDbContext` (Postgres, Identity), migrations, `ApiKeyService` (generate/hash/validate) + tests (Testcontainers).
+4. **McpBearer auth + Tunnel** — auth handler (API-key branch), `AgentHub`, `ConnectionRegistry`, register/reject/disconnect semantics; tests with in-process `HubConnection` against `WebApplicationFactory`.
+5. **MCP endpoint + CallRelay** — `MapMcp` stateless with per-tenant handlers, timeout, error mapping, rate limiter; tests with a fake registry entry and a real SDK `McpClient` against the test server; **cross-tenant tests**.
+6. **Agent** — config, `LocalServerManager`, `TunnelClient`, hosting/CLI; unit tests with `MCPal.TestMcpServer` (stdio).
+7. **E2E** — cloud test host + in-process agent + TestMcpServer + SDK `McpClient` with API key: list, call, error, timeout, agent restart, two companies isolation.
+8. **OAuth AS** — metadata, DCR, authorize context/submit API, token (+refresh rotation), McpBearer token branch, cleanup job; tests scripting the full Claude-like flow through the API (DCR → authorize with key → token → `/mcp` call → refresh → revoke key → 401).
+9. **Portal API** — Identity, signup/login/me, keys, connections, connect-info; integration tests for signup + key lifecycle.
+10. **React SPA (MCPal.Web)** — Vite scaffold, API client, pages incl. OAuthAuthorize, build integration into Cloud wwwroot + SPA fallback; Vitest tests.
+11. **Packaging + docs** — Dockerfile (node + dotnet multi-stage), compose, agent single-file publish, README quickstart, `docs/` for tunnel protocol and OAuth.
+
+Execution: after plan approval, commit the spec in the new repo, then follow the superpowers workflow (writing-plans → executing-plans with TDD) per phase.
+
+## Verification (end-to-end)
+
+1. `dotnet test MCPal.sln` — all unit/integration/E2E green (Testcontainers needs Docker; tests mark inconclusive if absent, like the reference repo).
+2. `docker compose up` → cloud on `http://localhost:8080` serving the built SPA; sign up in portal, create key. (Dev: `npm run dev` in `MCPal.Web` + `dotnet run` in Cloud.)
+3. Run `MCPal.Agent` with `mcpal.json` pointing `mcpServers` at `MCPal.TestMcpServer` (stdio) → portal `/connections` shows it online with tools.
+4. `claude mcp add --transport http mcpal http://localhost:8080/mcp --header "Authorization: Bearer mcpal_…"` → `claude` lists `test__echo` etc. and a tool call returns the echo.
+5. OAuth path: `claude mcp add --transport http mcpal-oauth http://localhost:8080/mcp` → browser login page → paste key → tools usable; refresh works after 1 h (shorten via config for test).
+6. Real claude.ai: deploy behind TLS (public URL), add custom connector with the URL, OAuth → paste key → tools appear; second company sees nothing of the first.
+7. Kill the agent → tool call returns "agent offline" error; restart → tools return within one reconnect interval.
+
+## Assumptions / notes for later
+- Single cloud instance; `ConnectionRegistry` in memory. Scale-out later = Redis backplane + routing tool calls to the instance holding the connection (or sticky sessions per company).
+- MCP resources/prompts, CIMD support, header-name approval, and the Skill→MCP generator are separate follow-up specs.
+- Claude's per-tool-call timeout is not documented; 120 s default is configurable.
+
+## Conventions (Nordstein C#, applied inside the plan layout)
+
+Skills `nordstein-code-basics` and `nordstein-code-csharp` apply. Key points for the next phases:
+- TDD: failing test first. `dotnet build` must stay at zero warnings (warnings are errors).
+- Never `!`, `null!`, `default!` or `#pragma warning disable` for nullability (only exception: a guard test passing `null!`, marked `// guard test`).
+- Guards with BCL helpers (`ArgumentNullException.ThrowIfNull`, …). Timestamps are `DateTimeOffset`; current time only from injected `TimeProvider` (registered as `TimeProvider.System` in both modules; tests use `FakeTimeProvider`).
+- Every async method takes a `CancellationToken` and forwards it.
+- `internal` by default; public only for interfaces, DTOs (Contracts) and the Autofac modules. `InternalsVisibleTo` is already set: Cloud → `MCPal.Cloud.Tests`, `MCPal.E2E.Tests`; Agent → `MCPal.Agent.Tests`, `MCPal.E2E.Tests`.
+- Constructor injection only, no static state, no service locator. All registrations live in the owning project's module.
+- Microsoft libraries first: `IOptions<T>` + `ValidateDataAnnotations().ValidateOnStart()`, `ILogger<T>`, `IMemoryCache`, rate-limiting middleware, `RandomNumberGenerator`/`SHA256`, `PasswordHasher<T>` via Identity, health checks.
+- Locking: no `lock` / raw `SemaphoreSlim` in feature code. `ConnectionRegistry` (phase 4) needs a keyed async lock in a shared place, or an immutable-snapshot design, decided there.
+- Entities: domain interface + internal immutable record, separate EF entity + config/mapper (five-file pattern) — inside `MCPal.Cloud` folders `Tenancy/` (domain) and `Storage/` (EF). `UpdatedAt` as concurrency token. No global query filters.
+- Tests: names `Subject_Condition_ExpectedOutcome`, no instance fields or `[SetUp]` state, SUT resolved from the container. A base harness that builds a fresh container per test arrives with phase 3.
+
+## Status and handoff
+
+### Done (phase 1, 2026-09-30)
+- Projects created and in `MCPal.sln`: `src/MCPal.Contracts` (empty), `src/MCPal.Cloud` (Autofac host, only `GET /health` via health checks, port 8080 in `launchSettings.json`), `src/MCPal.Agent` (Autofac worker host, no services yet), `tests/MCPal.Cloud.Tests` (1 test: `HealthEndpointTests`), `tests/MCPal.Agent.Tests` and `tests/MCPal.E2E.Tests` (empty), `tests/MCPal.TestMcpServer` (placeholder `Program.cs`).
+- `src/MCPal.Cloud/Dockerfile`: .NET-only multi-stage build, runs as non-root `$APP_UID`. The node stage for the SPA is still missing (phase 11).
+- `docker-compose.yml`: `cloud` + `postgres:17` with healthcheck, volumes `cloud-keys` (`/data/keys`) and `postgres-data`. Env vars `ConnectionStrings__Mcpal`, `Mcpal__PublicUrl`, `Mcpal__DataProtectionPath` are set but not yet read by the code.
+- `README.md` rewritten (layout, dev commands, license). Spec copied to `docs/superpowers/specs/2026-09-29-mcpal-design.md` (original version; this file is newer).
+- Verified: `dotnet build MCPal.sln` 0 warnings / 0 errors; `dotnet test MCPal.sln` 1/1 passed (empty test projects exit 0); `docker compose up` → `curl localhost:8080/health` returns `Healthy`.
+- Not included: `src/MCPal.Web` (Vite scaffold is phase 10).
+
+### Open items before phase 2
+1. Commit phase 1 (nothing is committed yet; `git status` shows everything untracked, `README.md` modified).
+2. Decide whether `plan.md` at the repo root stays (working copy) or only `docs/superpowers/specs/…` is kept; sync the two.
+3. Check the `/data/keys` volume permissions for the non-root container user before phase 9 uses Data Protection (named volume is created as root; may need `RUN mkdir -p /data/keys && chown $APP_UID /data/keys` in the Dockerfile).
+4. NUnit 5.0.0 is new; if analyzer or adapter problems show up, fall back to NUnit 4.x in `Directory.Packages.props`.
+
+### Next steps
+1. **Phase 2 — Contracts + ToolNaming.** Write tests first.
+   - `MCPal.Contracts`: records `AgentCatalog`, `ServerCatalog`, `ToolDescriptor`, `CallToolRequest`, `CallToolResponse`, `RegisterResult` (+ rejected-server record with reason), `IAgentHubClient`, hub-method interface for `Register`/`ToolsChanged`, `ProtocolVersion` constant. Schema/content as JSON strings. No package references.
+   - `ToolNaming` in `MCPal.Cloud/Tunnel/`: sanitize to `[A-Za-z0-9_-]`, `server__tool`, ≤ 64 chars with truncate + 6-char hash suffix. Tests in `MCPal.Cloud.Tests/Tunnel/`, including collisions, unicode, max length, determinism.
+   - Consider a `MCPal.Contracts` serialization round-trip test (System.Text.Json) in `MCPal.Cloud.Tests` or a new `MCPal.Contracts.Tests`.
+2. **Phase 3 — Storage + Tenancy.** Add packages `Npgsql.EntityFrameworkCore.PostgreSQL`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, `Microsoft.EntityFrameworkCore.Design`, `Testcontainers.PostgreSql`, `Microsoft.Extensions.TimeProvider.Testing` to `Directory.Packages.props`. Build the test base harness (fresh Autofac container per test, Testcontainers Postgres, inconclusive when Docker is missing). Then `MCPalDbContext`, entities, first migration, `ApiKeyService`.
+3. **Phase 4 onward** as in the implementation plan above. Before phase 5/6 re-verify ModelContextProtocol SDK 2.2.0 member names (see research notes).
+
+Each phase ends with `dotnet build` at zero warnings, `dotnet test` green, and a commit.
+

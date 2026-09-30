@@ -1,0 +1,34 @@
+services:
+  cloud:
+    build:
+      context: .
+      dockerfile: src/MCPal.Cloud/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ConnectionStrings__Mcpal: "Host=postgres;Database=mcpal;Username=mcpal;Password=mcpal"
+      Mcpal__PublicUrl: "http://localhost:8080"
+      Mcpal__DataProtectionPath: "/data/keys"
+    volumes:
+      - cloud-keys:/data/keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: mcpal
+      POSTGRES_USER: mcpal
+      POSTGRES_PASSWORD: mcpal
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcpal -d mcpal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cloud-keys:
+  postgres-data:

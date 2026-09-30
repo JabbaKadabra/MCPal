@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tunnel protocol shared by cloud and agent. Must stay free of MCP SDK and framework dependencies. -->
+
+</Project>
