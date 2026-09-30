@@ -1,10 +1,12 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using MCPal.Cloud.Mcp;
+using MCPal.Cloud.OAuth;
 using MCPal.Cloud.Storage;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MCPal.Cloud;
@@ -47,12 +49,14 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
         builder.RegisterType<TunnelTerminator>().As<IApiKeyRevocationListener>().SingleInstance();
         if (registerWebServices)
         {
-            builder.RegisterType<NullAccessTokenValidator>().As<IAccessTokenValidator>().InstancePerLifetimeScope();
+            builder.RegisterType<OAuthCleanupService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<CallRelay>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<TenantToolHandlers>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<HubAgentInvoker>().As<IAgentInvoker>().SingleInstance();
         }
 
+        builder.RegisterType<OAuthService>().As<IOAuthService>().As<IAccessTokenValidator>().InstancePerLifetimeScope();
+        builder.RegisterType<OAuthTokenRevoker>().As<IApiKeyRevocationListener>().InstancePerLifetimeScope();
         builder.RegisterType<ApiKeyService>().As<IApiKeyService>().InstancePerLifetimeScope();
         builder.RegisterType<CompanyService>().As<ICompanyService>().InstancePerLifetimeScope();
     }

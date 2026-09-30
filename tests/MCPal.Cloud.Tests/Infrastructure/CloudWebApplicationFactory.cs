@@ -3,10 +3,10 @@ using MCPal.Cloud.Tenancy;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace MCPal.Cloud.Tests.Infrastructure;
 
@@ -16,9 +16,11 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
     private readonly string connectionString;
     private readonly Action<ContainerBuilder>? configureContainer;
     private readonly Dictionary<string, string?> settings;
+    private readonly TimeProvider? timeProvider;
 
-    private CloudWebApplicationFactory(string connectionString, Action<ContainerBuilder>? configureContainer, Dictionary<string, string?>? settings)
+    private CloudWebApplicationFactory(string connectionString, Action<ContainerBuilder>? configureContainer, Dictionary<string, string?>? settings, TimeProvider? timeProvider)
     {
+        this.timeProvider = timeProvider;
         this.connectionString = connectionString;
         this.configureContainer = configureContainer;
         this.settings = settings ?? [];
@@ -27,10 +29,11 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
     public static async Task<CloudWebApplicationFactory> CreateAsync(
         CancellationToken cancellationToken,
         Action<ContainerBuilder>? configureContainer = null,
-        Dictionary<string, string?>? settings = null)
+        Dictionary<string, string?>? settings = null,
+        TimeProvider? timeProvider = null)
     {
         var connectionString = await PostgresFixture.CreateDatabaseAsync(cancellationToken);
-        return new CloudWebApplicationFactory(connectionString, configureContainer, settings);
+        return new CloudWebApplicationFactory(connectionString, configureContainer, settings, timeProvider);
     }
 
     /// <summary>Creates a company with one API key.</summary>
@@ -73,10 +76,23 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
 
             configuration.AddInMemoryCollection(values);
         });
-        if (configureContainer is not null)
+    }
+
+    /// <summary>
+    /// Runs after the host's own container callbacks (and after the module's populated services), so overrides win.
+    /// </summary>
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        builder.ConfigureContainer<ContainerBuilder>(container =>
         {
-            builder.ConfigureTestContainer<ContainerBuilder>(configureContainer);
-        }
+            if (timeProvider is not null)
+            {
+                container.RegisterInstance(timeProvider).As<TimeProvider>();
+            }
+
+            configureContainer?.Invoke(container);
+        });
+        return base.CreateHost(builder);
     }
 }
 
