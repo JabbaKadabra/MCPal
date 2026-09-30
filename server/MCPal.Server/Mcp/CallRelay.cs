@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MCPal.Server.Access;
+using MCPal.Server.Access.UserContext;
 using MCPal.Server.Audit;
 using MCPal.Server.Diagnostics;
 using MCPal.Server.Tenancy;
@@ -17,6 +18,7 @@ namespace MCPal.Server.Mcp;
 internal sealed class CallRelay(
     ConnectionRegistry registry,
     AccessEvaluator access,
+    UserContextIssuer issuer,
     IBridgeInvoker invoker,
     ServerTelemetry telemetry,
     IAuditSink audit,
@@ -37,7 +39,8 @@ internal sealed class CallRelay(
         var companyId = caller.CompanyId;
         var startedAt = timeProvider.GetUtcNow();
         var started = timeProvider.GetTimestamp();
-        var policy = await access.GetUserPolicyAsync(companyId, caller.UserId, cancellationToken);
+        var company = await access.GetCompanyPolicyAsync(companyId, cancellationToken);
+        var policy = company.ForUser(caller.UserId);
 
         // A tool the caller may not use answers exactly like an unknown tool: its existence is not revealed.
         if (!registry.TryResolve(companyId, publicName, out var tool) || policy is null || !policy.Allows(tool.ServerName, tool.Descriptor.Name))
@@ -62,7 +65,11 @@ internal sealed class CallRelay(
         string? errorMessage = "The bridge could not be reached or returned an error.";
         try
         {
-            var response = await invoker.CallToolAsync(tool.ConnectionId, request, timeoutSource.Token);
+            // Bridges older than 1.2 do not understand the caller; they get none.
+            var outgoing = ProtocolVersion.AtLeast(tool.BridgeProtocolVersion, ProtocolVersion.Major, ProtocolVersion.UserContextMinor)
+                ? request with { User = await IssueUserContextAsync(policy, company, caller, tool, request.RequestId, timeoutSource.Token) }
+                : request;
+            var response = await invoker.CallToolAsync(tool.ConnectionId, outgoing, timeoutSource.Token);
             outcome = ToolCallOutcome.From(response);
             errorMessage = outcome == ToolCallOutcome.Ok ? null : response.ErrorMessage;
             return Map(response, publicName);
@@ -92,6 +99,13 @@ internal sealed class CallRelay(
         {
             Finish(caller, tool, publicName, activity, startedAt, started, outcome, errorMessage);
         }
+    }
+
+    /// <summary>The caller as the bridge hands it to local servers: a signed token plus its claims. The user data comes from the cached policy, so no extra query.</summary>
+    private async Task<UserContext> IssueUserContextAsync(UserPolicy user, CompanyPolicy company, CallerIdentity caller, RegisteredTool tool, string requestId, CancellationToken cancellationToken)
+    {
+        var token = await issuer.IssueAsync(user, company.CompanyId, company.CompanySlug, tool.ServerName, tool.Descriptor.Name, requestId, caller.AuthKind, cancellationToken);
+        return new UserContext(token, user.UserId, user.Email, string.IsNullOrWhiteSpace(user.DisplayName) ? user.Email : user.DisplayName, user.GroupNames, company.CompanyId, company.CompanySlug);
     }
 
     /// <summary>The one place where a finished call is classified: metrics, the span and the audit log all get the same outcome.</summary>

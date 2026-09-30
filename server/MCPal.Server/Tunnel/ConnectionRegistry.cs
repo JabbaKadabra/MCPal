@@ -21,7 +21,8 @@ internal sealed record ConnectionInfo(
     string BridgeVersion,
     IReadOnlyList<RegisteredServer> Servers,
     IReadOnlyList<RejectedServer> RejectedServers,
-    IReadOnlyList<RejectedTool> RejectedTools);
+    IReadOnlyList<RejectedTool> RejectedTools,
+    string BridgeProtocolVersion = "");
 
 /// <summary>
 /// In-memory view of live bridge tunnels, keyed by company first. Every lookup starts from the caller's company.
@@ -105,7 +106,7 @@ internal sealed class ConnectionRegistry
                 accepted.Add(new RegisteredServer(server.Name, tools));
             }
 
-            var updated = existing with { BridgeName = catalog.BridgeName, BridgeVersion = catalog.BridgeVersion, Servers = accepted, RejectedServers = rejectedServers, RejectedTools = rejectedTools };
+            var updated = existing with { BridgeName = catalog.BridgeName, BridgeVersion = catalog.BridgeVersion, BridgeProtocolVersion = catalog.ProtocolVersion, Servers = accepted, RejectedServers = rejectedServers, RejectedTools = rejectedTools };
             return (WithConnection(current, companyId, updated), new RegisterResult(true, rejectedServers, rejectedTools, null));
         });
     }

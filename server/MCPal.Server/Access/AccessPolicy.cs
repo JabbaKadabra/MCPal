@@ -23,8 +23,11 @@ internal sealed record UserPolicy(string UserId, string Email, string? DisplayNa
         IsOwner || Grants.Any(grant => grant.Allows(serverName, toolName));
 }
 
-/// <summary>The policies of all active users of one company. A user that is missing (unknown, disabled, other company) may use nothing.</summary>
-internal sealed record CompanyPolicy(Guid CompanyId, IReadOnlyDictionary<string, UserPolicy> Users)
+/// <summary>
+/// The policies of all active users of one company. A user that is missing (unknown, disabled, other company) may use nothing.
+/// <paramref name="CompanySlug"/> names the company in caller tokens (the slug never changes).
+/// </summary>
+internal sealed record CompanyPolicy(Guid CompanyId, string CompanySlug, IReadOnlyDictionary<string, UserPolicy> Users)
 {
     public UserPolicy? ForUser(string userId) => Users.GetValueOrDefault(userId);
 }

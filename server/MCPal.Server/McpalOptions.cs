@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Options;
 
 namespace MCPal.Server;
 
@@ -36,6 +37,9 @@ public sealed class McpalOptions : IValidatableObject
     /// <summary>Version of the newest bridge release, e.g. <c>1.1.0</c>. Bridges that are older get an "update available" hint in the portal. Empty disables the hint.</summary>
     public string? LatestBridgeVersion { get; set; }
 
+    /// <summary>The signed caller token that local MCP servers receive with every tool call.</summary>
+    public UserContextOptions UserContext { get; set; } = new();
+
     /// <summary>Outgoing mail (account confirmation, password reset, invitations). Without a host the mails are only written to the log.</summary>
     public SmtpOptions Smtp { get; set; } = new();
 
@@ -63,6 +67,16 @@ public sealed class McpalOptions : IValidatableObject
             }
         }
 
+        if (UserContext.TokenLifetimeSeconds is < 30 or > 900)
+        {
+            yield return new ValidationResult("The caller token lifetime must be between 30 and 900 seconds.", [$"{nameof(UserContext)}.{nameof(UserContextOptions.TokenLifetimeSeconds)}"]);
+        }
+
+        if (UserContext.SigningKeyLifetimeDays is < 7 or > 365)
+        {
+            yield return new ValidationResult("The signing key lifetime must be between 7 and 365 days.", [$"{nameof(UserContext)}.{nameof(UserContextOptions.SigningKeyLifetimeDays)}"]);
+        }
+
         foreach (var network in TrustedProxyNetworks)
         {
             if (!System.Net.IPNetwork.TryParse(network, out _))
@@ -71,6 +85,32 @@ public sealed class McpalOptions : IValidatableObject
             }
         }
     }
+}
+
+/// <summary>
+/// Checks what depends on the hosting environment. In Production the Data Protection key ring must be persistent: it protects the
+/// signing keys, and a lost key ring would silently rotate them (every local server then fails to verify until it reloads the JWKS).
+/// Hosts without an environment (tests that build the container directly) are not checked.
+/// </summary>
+internal sealed class McpalEnvironmentValidator(IHostEnvironment? environment = null) : IValidateOptions<McpalOptions>
+{
+    public ValidateOptionsResult Validate(string? name, McpalOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        return environment is { } host && host.IsProduction() && string.IsNullOrWhiteSpace(options.DataProtectionPath)
+            ? ValidateOptionsResult.Fail("Set 'Mcpal:DataProtectionPath' (environment variable Mcpal__DataProtectionPath) to a persistent directory, e.g. a mounted volume. Without it the Data Protection keys, and with them the caller token signing keys, are lost on every restart.")
+            : ValidateOptionsResult.Success;
+    }
+}
+
+public sealed class UserContextOptions
+{
+    /// <summary>How long a caller token is valid (30 to 900 seconds). Short, because it is a bearer credential inside the company network.</summary>
+    public int TokenLifetimeSeconds { get; set; } = 300;
+
+    /// <summary>How long a signing key signs (7 to 365 days) before its successor takes over.</summary>
+    public int SigningKeyLifetimeDays { get; set; } = 90;
 }
 
 public sealed class SmtpOptions

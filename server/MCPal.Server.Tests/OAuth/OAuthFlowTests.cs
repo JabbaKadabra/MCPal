@@ -102,7 +102,7 @@ internal sealed class OAuthFlowTests
     };
 
     [Test]
-    public async Task Metadata_ProtectedResourceAndAuthorizationServer_DescribeEndpoints()
+    public async Task Metadata_ProtectedResourceAndAuthorizationServer_DescribeEndpointsIncludingJwksUri()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:PublicUrl"] = "https://mcpal.example.com" });
         using var http = factory.CreateClient();
@@ -115,6 +115,7 @@ internal sealed class OAuthFlowTests
         server.GetProperty("issuer").GetString().Should().Be("https://mcpal.example.com");
         server.GetProperty("token_endpoint").GetString().Should().Be("https://mcpal.example.com/oauth/token");
         server.GetProperty("registration_endpoint").GetString().Should().Be("https://mcpal.example.com/oauth/register");
+        server.GetProperty("jwks_uri").GetString().Should().Be("https://mcpal.example.com/.well-known/jwks.json");
         server.GetProperty("code_challenge_methods_supported")[0].GetString().Should().Be("S256");
     }
 

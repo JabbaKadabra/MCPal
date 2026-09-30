@@ -37,6 +37,50 @@ internal sealed class ContractsSerializationTests
     }
 
     [Test]
+    public void CallToolRequest_WithUserContext_RoundTripsAllMembers()
+    {
+        var companyId = Guid.NewGuid();
+        var request = new CallToolRequest(
+            "r1", "hr", "salaries", "{}", "00-abc-def-01",
+            new UserContext("jwt.token.here", "user-1", "anna@acme.example", "Anna", ["Everyone", "hr"], companyId, "acme"));
+
+        var copy = JsonSerializer.Deserialize<CallToolRequest>(JsonSerializer.Serialize(request));
+
+        copy.Should().NotBeNull();
+        copy.User.Should().NotBeNull();
+        copy.User.Token.Should().Be("jwt.token.here");
+        copy.User.UserId.Should().Be("user-1");
+        copy.User.Groups.Should().Equal("Everyone", "hr");
+        copy.User.CompanyId.Should().Be(companyId);
+        copy.User.Company.Should().Be("acme");
+        copy.TraceParent.Should().Be("00-abc-def-01");
+    }
+
+    [Test]
+    public void CallToolRequest_FromProtocol11Sender_DeserializesWithoutUser()
+    {
+        // What a 1.0 or 1.1 server sends: no "user" member at all.
+        const string json = """{"requestId":"r1","serverName":"hr","toolName":"salaries","argumentsJson":"{}","traceParent":null}""";
+
+        var request = JsonSerializer.Deserialize<CallToolRequest>(json, JsonSerializerOptions.Web);
+
+        request.Should().NotBeNull();
+        request.User.Should().BeNull();
+        request.ToolName.Should().Be("salaries");
+    }
+
+    [Test]
+    public void CallToolRequest_WithoutUser_SerializesUserAsNull()
+    {
+        var request = new CallToolRequest("r1", "hr", "salaries", "{}");
+
+        var copy = JsonSerializer.Deserialize<CallToolRequest>(JsonSerializer.Serialize(request));
+
+        copy.Should().NotBeNull();
+        copy.User.Should().BeNull();
+    }
+
+    [Test]
     public void CallToolResponse_RoundTrip_PreservesContent()
     {
         var response = new CallToolResponse(false, "[{\"type\":\"text\",\"text\":\"hi\"}]", null);
@@ -46,6 +90,8 @@ internal sealed class ContractsSerializationTests
         copy.Should().Be(response);
     }
 
+    [TestCase("1.2", 1, 2, true)]
+    [TestCase("1.1", 1, 2, false)]
     [TestCase("1.1", 1, 1, true)]
     [TestCase("1.2", 1, 1, true)]
     [TestCase("2.0", 1, 1, true)]

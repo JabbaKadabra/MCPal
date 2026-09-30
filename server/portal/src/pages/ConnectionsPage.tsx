@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { CopyButton } from '../components/CopyButton';
 import { ErrorText } from '../components/ErrorText';
 import { Tag } from '../components/Tag';
 import { t } from '../i18n';
@@ -19,6 +20,9 @@ export function ConnectionsPage() {
             <h2>{connection.bridgeName}</h2>
             <span className="led">{t('connections.online')}</span>
             <Tag tone="plain">{t('connections.version', { version: connection.bridgeVersion })}</Tag>
+            <Tag tone={connection.supportsUserContext ? 'ok' : 'warn'}>
+              {connection.supportsUserContext ? t('connections.userContext.yes') : t('connections.userContext.no')}
+            </Tag>
           </header>
           <p className="bridge-meta">
             <span>
@@ -26,6 +30,7 @@ export function ConnectionsPage() {
             </span>
             {connection.apiKeyName !== null && <span>{`${t('connections.key')} ${connection.apiKeyName}`}</span>}
           </p>
+          {!connection.supportsUserContext && <p className="notice">{t('connections.userContext.noHelp')}</p>}
           {connection.updateAvailable && connection.latestBridgeVersion !== null && (
             <p className="notice">{t('connections.update', { latest: connection.latestBridgeVersion })}</p>
           )}
@@ -36,6 +41,9 @@ export function ConnectionsPage() {
                   <strong>{server.name}</strong>
                   <Tag tone="bridge">{`${server.tools.length} ${t('connections.tools')}`}</Tag>
                 </div>
+                <p className="muted audience">
+                  {t('connections.audience')} <code>{server.audience}</code> <CopyButton value={server.audience} />
+                </p>
                 <ul className="tools">
                   {server.tools.map((tool) => (
                     <li key={tool}>

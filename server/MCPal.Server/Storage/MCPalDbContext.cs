@@ -1,4 +1,5 @@
 using MCPal.Server.Access;
+using MCPal.Server.Access.UserContext;
 using MCPal.Server.Audit;
 using MCPal.Server.OAuth;
 using MCPal.Server.Portal;
@@ -30,6 +31,8 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
     public DbSet<AccessGroupMember> AccessGroupMembers => Set<AccessGroupMember>();
 
     public DbSet<AccessGrant> AccessGrants => Set<AccessGrant>();
+
+    public DbSet<SigningKey> SigningKeys => Set<SigningKey>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -106,6 +109,14 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             grant.HasIndex(g => new { g.CompanyId, g.GroupId });
             grant.HasOne<AccessGroup>().WithMany().HasForeignKey(g => g.GroupId).OnDelete(DeleteBehavior.Cascade);
             grant.HasOne<Company>().WithMany().HasForeignKey(g => g.CompanyId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<SigningKey>(key =>
+        {
+            key.HasKey(k => k.Kid);
+            key.Property(k => k.Kid).HasMaxLength(64);
+            key.Property(k => k.Algorithm).HasMaxLength(16);
+            key.HasIndex(k => k.RemoveAt);
         });
 
         builder.Entity<OAuthClient>(client =>

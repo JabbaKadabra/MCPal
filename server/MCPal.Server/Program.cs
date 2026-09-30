@@ -1,6 +1,7 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using MCPal.Server;
+using MCPal.Server.Access.UserContext;
 using MCPal.Server.OAuth;
 using MCPal.Server.Portal;
 using MCPal.Server.Tenancy;
@@ -26,6 +27,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => fa
 app.MapHealthChecks("/health/ready", readiness);
 app.MapHealthChecks("/health", readiness);
 OAuthEndpoints.Map(app);
+JwksEndpoints.Map(app);
 PortalEndpoints.Map(app);
 app.MapHub<BridgeHub>("/hub/bridge");
 app.MapMcp("/mcp")

@@ -80,7 +80,10 @@ export interface Connection {
   latestBridgeVersion: string | null;
   connectedAt: string;
   apiKeyName: string | null;
-  servers: { name: string; tools: string[] }[];
+  /** True for bridges of protocol 1.2 or newer: they hand the caller to local servers. */
+  supportsUserContext: boolean;
+  /** `audience` is the `aud` claim of caller tokens for this server. */
+  servers: { name: string; tools: string[]; audience: string }[];
   rejected: { server: string; reason: string }[];
   rejectedTools: { server: string; tool: string; reason: string }[];
 }

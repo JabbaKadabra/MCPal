@@ -8,7 +8,7 @@ namespace MCPal.Server.Tests.Access;
 [TestFixture]
 internal sealed class AccessPolicyCacheTests : ServerTestBase
 {
-    private static CompanyPolicy PolicyOf(Guid companyId) => new(companyId, new Dictionary<string, UserPolicy>());
+    private static CompanyPolicy PolicyOf(Guid companyId) => new(companyId, "acme", new Dictionary<string, UserPolicy>());
 
     [Test]
     public async Task GetAsync_SecondCall_ServesTheCachedPolicy()

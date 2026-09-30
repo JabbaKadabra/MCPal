@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using MCPal.Contracts;
 using MCPal.Server.Access;
+using MCPal.Server.Access.UserContext;
 using MCPal.Server.Audit;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
@@ -41,7 +43,8 @@ internal sealed record ApiKeyResponse(
 
 internal sealed record CreatedApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string Key, string Purpose);
 
-internal sealed record ServerResponse(string Name, IReadOnlyList<string> Tools);
+/// <param name="Audience">The <c>aud</c> claim of caller tokens for this server: <c>mcpal:&lt;company&gt;/&lt;server&gt;</c>. Local servers that verify tokens expect it.</param>
+internal sealed record ServerResponse(string Name, IReadOnlyList<string> Tools, string Audience);
 
 internal sealed record RejectedServerResponse(string Server, string Reason);
 
@@ -54,6 +57,7 @@ internal sealed record ConnectionResponse(
     string? LatestBridgeVersion,
     DateTimeOffset ConnectedAt,
     string? ApiKeyName,
+    bool SupportsUserContext,
     IReadOnlyList<ServerResponse> Servers,
     IReadOnlyList<RejectedServerResponse> Rejected,
     IReadOnlyList<RejectedToolResponse> RejectedTools);
@@ -315,13 +319,14 @@ internal static class PortalEndpoints
         return await keys.RevokeAsync(user.CompanyId, id, cancellationToken) ? Results.NoContent() : Results.NotFound();
     }
 
-    private static async Task<IResult> ConnectionsAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, ConnectionRegistry registry, MCPalDbContext db, IOptions<McpalOptions> options, CancellationToken cancellationToken)
+    private static async Task<IResult> ConnectionsAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, ConnectionRegistry registry, MCPalDbContext db, ICompanyService companies, IOptions<McpalOptions> options, CancellationToken cancellationToken)
     {
         if (await CompanyOfAsync(principal, users) is not { } companyId)
         {
             return Results.Unauthorized();
         }
 
+        var slug = (await companies.FindAsync(companyId, cancellationToken))?.Slug ?? string.Empty;
         var keyNames = await db.ApiKeys.AsNoTracking().Where(k => k.CompanyId == companyId).ToDictionaryAsync(k => k.Id, k => k.Name, cancellationToken);
         var latest = string.IsNullOrWhiteSpace(options.Value.LatestBridgeVersion) ? null : options.Value.LatestBridgeVersion.Trim();
         var connections = registry.Connections(companyId).Select(c => new ConnectionResponse(
@@ -331,7 +336,8 @@ internal static class PortalEndpoints
             latest,
             c.ConnectedAt,
             keyNames.GetValueOrDefault(c.ApiKeyId),
-            [.. c.Servers.Select(s => new ServerResponse(s.Name, [.. s.Tools.Select(t => t.Descriptor.Name)]))],
+            ProtocolVersion.AtLeast(c.BridgeProtocolVersion, ProtocolVersion.Major, ProtocolVersion.UserContextMinor),
+            [.. c.Servers.Select(s => new ServerResponse(s.Name, [.. s.Tools.Select(t => t.Descriptor.Name)], UserContextIssuer.Audience(slug, s.Name)))],
             [.. c.RejectedServers.Select(r => new RejectedServerResponse(r.ServerName, r.Reason))],
             [.. c.RejectedTools.Select(r => new RejectedToolResponse(r.ServerName, r.ToolName, r.Reason))]));
         return Results.Json(connections);

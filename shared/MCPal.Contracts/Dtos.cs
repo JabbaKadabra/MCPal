@@ -33,8 +33,18 @@ public static class RegisterCodes
     public const string UnsupportedProtocol = "unsupported_protocol";
 }
 
-/// <summary><paramref name="TraceParent"/> (protocol 1.1) is the W3C <c>traceparent</c> of the MCPal server's tool call span, so the bridge's span joins the same trace.</summary>
-public sealed record CallToolRequest(string RequestId, string ServerName, string ToolName, string ArgumentsJson, string? TraceParent = null);
+/// <summary>
+/// Who is calling (protocol 1.2): the signed caller token and the same facts as plain claims. The MCPal server sends it only to bridges
+/// that announced protocol 1.2 or later. <paramref name="Token"/> is a JWT (ES256, verifiable with the server's JWKS); the other
+/// members repeat its claims for local servers that do not verify tokens (see docs/access-control.md for the trust model).
+/// </summary>
+public sealed record UserContext(string Token, string UserId, string? Email, string? Name, IReadOnlyList<string> Groups, Guid CompanyId, string Company);
+
+/// <summary>
+/// <paramref name="TraceParent"/> (protocol 1.1) is the W3C <c>traceparent</c> of the MCPal server's tool call span, so the bridge's span joins the same trace.
+/// <paramref name="User"/> (protocol 1.2) is the caller; null for bridges older than 1.2.
+/// </summary>
+public sealed record CallToolRequest(string RequestId, string ServerName, string ToolName, string ArgumentsJson, string? TraceParent = null, UserContext? User = null);
 
 /// <summary>
 /// <paramref name="ContentJson"/> holds the serialized MCP CallToolResult content array. Protocol 1.1 adds

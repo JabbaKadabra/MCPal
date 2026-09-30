@@ -1,6 +1,7 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using MCPal.Server.Access;
+using MCPal.Server.Access.UserContext;
 using MCPal.Server.Audit;
 using MCPal.Server.Diagnostics;
 using MCPal.Server.Mcp;
@@ -38,6 +39,7 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddMetrics();
+        services.AddSingleton<IValidateOptions<McpalOptions>, McpalEnvironmentValidator>();
         services.AddOptions<McpalOptions>()
             .BindConfiguration(McpalOptions.SectionName)
             .ValidateDataAnnotations()
@@ -76,6 +78,8 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         builder.RegisterType<AccessPolicyLoader>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<AccessEvaluator>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<AccessService>().AsSelf().InstancePerLifetimeScope();
+        builder.RegisterType<SigningKeyStore>().AsSelf().SingleInstance();
+        builder.RegisterType<UserContextIssuer>().AsSelf().SingleInstance();
         builder.RegisterType<ServerTelemetry>().AsSelf().SingleInstance();
         builder.RegisterType<AuditWriter>().AsSelf().As<IAuditSink>().SingleInstance();
         builder.RegisterType<AuditRetention>().AsSelf().InstancePerLifetimeScope();
@@ -84,6 +88,7 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         if (registerWebServices)
         {
             builder.RegisterType<DatabaseMigrator>().As<IHostedService>().SingleInstance();
+            builder.RegisterType<SigningKeyRotationService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<OAuthCleanupService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<TunnelSweepService>().As<IHostedService>().SingleInstance();
             builder.Register(context => context.Resolve<AuditWriter>()).As<IHostedService>().SingleInstance();

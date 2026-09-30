@@ -79,6 +79,7 @@ internal static class OAuthEndpoints
             ["authorization_endpoint"] = baseUrl + "/oauth/authorize",
             ["token_endpoint"] = baseUrl + "/oauth/token",
             ["registration_endpoint"] = baseUrl + "/oauth/register",
+            ["jwks_uri"] = baseUrl + "/.well-known/jwks.json",
             ["response_types_supported"] = ResponseTypes,
             ["grant_types_supported"] = GrantTypes,
             ["code_challenge_methods_supported"] = ChallengeMethods,
