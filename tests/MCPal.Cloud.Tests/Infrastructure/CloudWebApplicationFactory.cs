@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
 namespace MCPal.Cloud.Tests.Infrastructure;
@@ -17,9 +18,11 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
     private readonly Action<ContainerBuilder>? configureContainer;
     private readonly Dictionary<string, string?> settings;
     private readonly TimeProvider? timeProvider;
+    private readonly string? webRoot;
 
-    private CloudWebApplicationFactory(string connectionString, Action<ContainerBuilder>? configureContainer, Dictionary<string, string?>? settings, TimeProvider? timeProvider)
+    private CloudWebApplicationFactory(string connectionString, Action<ContainerBuilder>? configureContainer, Dictionary<string, string?>? settings, TimeProvider? timeProvider, string? webRoot)
     {
+        this.webRoot = webRoot;
         this.timeProvider = timeProvider;
         this.connectionString = connectionString;
         this.configureContainer = configureContainer;
@@ -31,13 +34,14 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
         Action<ContainerBuilder>? configureContainer = null,
         Dictionary<string, string?>? settings = null,
         TimeProvider? timeProvider = null,
-        bool migrateOnStartup = false)
+        bool migrateOnStartup = false,
+        string? webRoot = null)
     {
         var connectionString = migrateOnStartup
             ? await PostgresFixture.CreateEmptyDatabaseAsync(cancellationToken)
             : await PostgresFixture.CreateDatabaseAsync(cancellationToken);
         settings = new Dictionary<string, string?>(settings ?? []) { ["Mcpal:MigrateOnStartup"] = migrateOnStartup ? "true" : "false" };
-        return new CloudWebApplicationFactory(connectionString, configureContainer, settings, timeProvider);
+        return new CloudWebApplicationFactory(connectionString, configureContainer, settings, timeProvider, webRoot);
     }
 
     /// <summary>Creates a company with one API key.</summary>
@@ -66,6 +70,18 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        if (webRoot is not null)
+        {
+            builder.ConfigureServices((context, _) =>
+            {
+                if (context.HostingEnvironment is IWebHostEnvironment environment)
+                {
+                    environment.WebRootPath = webRoot;
+                    environment.WebRootFileProvider = new PhysicalFileProvider(webRoot);
+                }
+            });
+        }
+
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             var values = new Dictionary<string, string?> { ["ConnectionStrings:Mcpal"] = connectionString };

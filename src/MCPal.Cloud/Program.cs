@@ -13,6 +13,8 @@ builder.Host.ConfigureContainer<ContainerBuilder>(container => container.Registe
 
 var app = builder.Build();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -24,5 +26,8 @@ app.MapHub<AgentHub>("/hub/agent");
 app.MapMcp("/mcp")
     .RequireAuthorization(McpBearerDefaults.McpPolicy)
     .RequireRateLimiting(CloudWebServices.McpRateLimitPolicy);
+
+// Client-side routes of the React SPA. API, MCP, tunnel and OAuth machine endpoints never fall back to index.html.
+app.MapFallbackToFile(@"{*path:regex(^(?!api(/|$)|mcp(/|$)|hub(/|$)|\.well-known(/|$)|oauth/(token|register)(/|$)).*$)}", "index.html");
 
 app.Run();
