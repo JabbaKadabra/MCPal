@@ -1,5 +1,8 @@
 using System.Text.Json.Serialization;
 using MCPal.Cloud.Tenancy;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 
 namespace MCPal.Cloud.OAuth;
@@ -18,7 +21,7 @@ internal sealed record ClientRegistrationResponse(
     [property: JsonPropertyName("response_types")] string[] ResponseTypes,
     [property: JsonPropertyName("client_id_issued_at")] long ClientIdIssuedAt);
 
-internal sealed record AuthorizeContextResponse(string ClientName, string RedirectHost);
+internal sealed record AuthorizeContextResponse(string ClientName, string RedirectHost, string? SignedInCompany);
 
 internal sealed record AuthorizeSubmitRequest(
     [property: JsonPropertyName("client_id")] string? ClientId,
@@ -29,7 +32,8 @@ internal sealed record AuthorizeSubmitRequest(
     [property: JsonPropertyName("state")] string? State,
     [property: JsonPropertyName("scope")] string? Scope,
     [property: JsonPropertyName("resource")] string? Resource,
-    [property: JsonPropertyName("api_key")] string? ApiKey);
+    [property: JsonPropertyName("api_key")] string? ApiKey,
+    [property: JsonPropertyName("use_session")] bool UseSession);
 
 internal sealed record RedirectResponse([property: JsonPropertyName("redirectUrl")] string RedirectUrl);
 
@@ -147,7 +151,8 @@ internal static class OAuthEndpoints
         });
     }
 
-    private static async Task<IResult> AuthorizeContextAsync(HttpRequest request, IOAuthService oauth, CancellationToken cancellationToken)
+    private static async Task<IResult> AuthorizeContextAsync(
+        HttpRequest request, IOAuthService oauth, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
     {
         var query = request.Query;
         var parameters = new AuthorizeParameters(
@@ -160,10 +165,19 @@ internal static class OAuthEndpoints
         }
 
         var authorize = validation.Request!;
-        return Results.Json(new AuthorizeContextResponse(authorize.Client.ClientName, new Uri(authorize.RedirectUri).Host));
+        var signedIn = await SessionCompanyAsync(request.HttpContext, users, companies, cancellationToken);
+        return Results.Json(new AuthorizeContextResponse(authorize.Client.ClientName, new Uri(authorize.RedirectUri).Host, signedIn?.Name));
     }
 
-    private static async Task<IResult> AuthorizeAsync(AuthorizeSubmitRequest? body, IOAuthService oauth, IApiKeyService apiKeys, CancellationToken cancellationToken)
+    private static async Task<IResult> AuthorizeAsync(
+        HttpContext http,
+        AuthorizeSubmitRequest? body,
+        IOAuthService oauth,
+        IApiKeyService apiKeys,
+        UserManager<PortalUser> users,
+        ICompanyService companies,
+        IAntiforgery antiforgery,
+        CancellationToken cancellationToken)
     {
         if (body is null)
         {
@@ -183,14 +197,52 @@ internal static class OAuthEndpoints
             return Error(400, validation.Error?.Error ?? "invalid_request", validation.Error?.Description ?? "Invalid request.");
         }
 
-        var key = string.IsNullOrWhiteSpace(body.ApiKey) ? null : await apiKeys.ValidateAsync(body.ApiKey.Trim(), cancellationToken);
-        if (key is null)
+        Guid companyId;
+        Guid? apiKeyId = null;
+        if (body.UseSession)
         {
-            return Error(401, "invalid_key", "The API key is missing, invalid, expired or revoked.");
+            try
+            {
+                await antiforgery.ValidateRequestAsync(http);
+            }
+            catch (AntiforgeryValidationException)
+            {
+                return Error(400, "invalid_request", "Invalid or missing anti-forgery token.");
+            }
+
+            if (await SessionCompanyAsync(http, users, companies, cancellationToken) is not { } company)
+            {
+                return Error(401, "login_required", "Sign in to the portal first.");
+            }
+
+            companyId = company.Id;
+        }
+        else
+        {
+            var key = string.IsNullOrWhiteSpace(body.ApiKey) ? null : await apiKeys.ValidateAsync(body.ApiKey.Trim(), cancellationToken);
+            if (key is null)
+            {
+                return Error(401, "invalid_key", "The API key is missing, invalid, expired or revoked.");
+            }
+
+            companyId = key.CompanyId;
+            apiKeyId = key.ApiKeyId;
         }
 
-        var code = await oauth.IssueCodeAsync(authorize, key.CompanyId, key.ApiKeyId, cancellationToken);
+        var code = await oauth.IssueCodeAsync(authorize, companyId, apiKeyId, cancellationToken);
         return Results.Json(new RedirectResponse(BuildRedirect(authorize.RedirectUri, authorize.State, code: code)));
+    }
+
+    private static async Task<Company?> SessionCompanyAsync(HttpContext http, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
+    {
+        var result = await http.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (!result.Succeeded || await users.GetUserAsync(result.Principal) is not { } user)
+        {
+            return null;
+        }
+
+        var company = await companies.FindAsync(user.CompanyId, cancellationToken);
+        return company is { Disabled: false } ? company : null;
     }
 
     private static string BuildRedirect(string redirectUri, string? state, string? code = null, OAuthError? error = null)

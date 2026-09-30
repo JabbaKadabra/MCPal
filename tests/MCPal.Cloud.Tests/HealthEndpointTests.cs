@@ -1,5 +1,5 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
+using MCPal.Cloud.Tests.Infrastructure;
 
 namespace MCPal.Cloud.Tests;
 
@@ -10,7 +10,7 @@ internal sealed class HealthEndpointTests
     public async Task Health_WhenRequested_ReturnsHealthy()
     {
         var cancellationToken = TestContext.CurrentContext.CancellationToken;
-        await using var factory = new WebApplicationFactory<Program>();
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(cancellationToken);
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(new Uri("/health", UriKind.Relative), cancellationToken);

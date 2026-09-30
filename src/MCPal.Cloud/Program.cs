@@ -2,6 +2,7 @@ using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using MCPal.Cloud;
 using MCPal.Cloud.OAuth;
+using MCPal.Cloud.Portal;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
 
@@ -18,6 +19,7 @@ app.UseAuthorization();
 
 app.MapHealthChecks("/health");
 OAuthEndpoints.Map(app);
+PortalEndpoints.Map(app);
 app.MapHub<AgentHub>("/hub/agent");
 app.MapMcp("/mcp")
     .RequireAuthorization(McpBearerDefaults.McpPolicy)

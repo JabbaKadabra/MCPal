@@ -45,8 +45,13 @@ internal sealed class PostgresFixture
         }
     }
 
-    /// <summary>Creates an isolated database and returns its connection string.</summary>
-    public static async Task<string> CreateDatabaseAsync(CancellationToken cancellationToken)
+    /// <summary>Creates an isolated database cloned from the migrated template and returns its connection string.</summary>
+    public static Task<string> CreateDatabaseAsync(CancellationToken cancellationToken) => CreateAsync($"TEMPLATE {TemplateName}", cancellationToken);
+
+    /// <summary>Creates an isolated database without any schema.</summary>
+    public static Task<string> CreateEmptyDatabaseAsync(CancellationToken cancellationToken) => CreateAsync(string.Empty, cancellationToken);
+
+    private static async Task<string> CreateAsync(string options, CancellationToken cancellationToken)
     {
         if (container is null || unavailableReason is not null)
         {
@@ -58,7 +63,7 @@ internal sealed class PostgresFixture
         {
             await connection.OpenAsync(cancellationToken);
             await using var command = connection.CreateCommand();
-            command.CommandText = $"CREATE DATABASE {name} TEMPLATE {TemplateName}";
+            command.CommandText = $"CREATE DATABASE {name} {options}";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

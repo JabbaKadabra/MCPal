@@ -49,6 +49,7 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
         builder.RegisterType<TunnelTerminator>().As<IApiKeyRevocationListener>().SingleInstance();
         if (registerWebServices)
         {
+            builder.RegisterType<DatabaseMigrator>().As<IHostedService>().SingleInstance();
             builder.RegisterType<OAuthCleanupService>().As<IHostedService>().SingleInstance();
             builder.RegisterType<CallRelay>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<TenantToolHandlers>().AsSelf().InstancePerLifetimeScope();

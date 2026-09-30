@@ -30,9 +30,13 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
         CancellationToken cancellationToken,
         Action<ContainerBuilder>? configureContainer = null,
         Dictionary<string, string?>? settings = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        bool migrateOnStartup = false)
     {
-        var connectionString = await PostgresFixture.CreateDatabaseAsync(cancellationToken);
+        var connectionString = migrateOnStartup
+            ? await PostgresFixture.CreateEmptyDatabaseAsync(cancellationToken)
+            : await PostgresFixture.CreateDatabaseAsync(cancellationToken);
+        settings = new Dictionary<string, string?>(settings ?? []) { ["Mcpal:MigrateOnStartup"] = migrateOnStartup ? "true" : "false" };
         return new CloudWebApplicationFactory(connectionString, configureContainer, settings, timeProvider);
     }
 
@@ -64,11 +68,7 @@ internal sealed class CloudWebApplicationFactory : WebApplicationFactory<Program
     {
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
-            var values = new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:Mcpal"] = connectionString,
-                ["Mcpal:MigrateOnStartup"] = "false",
-            };
+            var values = new Dictionary<string, string?> { ["ConnectionStrings:Mcpal"] = connectionString };
             foreach (var pair in settings)
             {
                 values[pair.Key] = pair.Value;
