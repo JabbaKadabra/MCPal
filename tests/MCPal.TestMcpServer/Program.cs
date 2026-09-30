@@ -1,2 +1,13 @@
-// Placeholder until phase 6 adds the stdio MCP server with echo, add, slow and fail tools.
-return 0;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using MCPal.TestMcpServer;
+
+var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+builder.Services
+    .AddMcpServer()
+    .WithStdioServerTransport()
+    .WithTools<TestTools>();
+
+await builder.Build().RunAsync();
