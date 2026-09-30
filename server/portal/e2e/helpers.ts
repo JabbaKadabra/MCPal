@@ -19,8 +19,8 @@ export async function signUp(page: Page, company = unique('Acme')): Promise<{ co
   return { company, email };
 }
 
-/** Creates a key for Claude on the API keys page and returns the full key shown once. */
-export async function createClaudeKey(page: Page, name = unique('key')): Promise<string> {
+/** Creates a personal access token on the API keys page (the default type) and returns the full key shown once. */
+export async function createPersonalToken(page: Page, name = unique('key')): Promise<string> {
   await page.getByLabel('Key name').fill(name);
   await page.getByRole('button', { name: 'Create key' }).click();
   const key = await page.getByTestId('created-key').innerText();

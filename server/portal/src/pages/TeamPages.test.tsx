@@ -27,8 +27,8 @@ function csrfThen(handler: (call: RecordedCall) => { status?: number; body?: unk
 
 const team: Team = {
   users: [
-    { id: 'u1', email: 'owner@acme.example', role: 'owner', emailConfirmed: true },
-    { id: 'u2', email: 'member@acme.example', role: 'member', emailConfirmed: true },
+    { id: 'u1', email: 'owner@acme.example', role: 'owner', emailConfirmed: true, disabled: false },
+    { id: 'u2', email: 'member@acme.example', role: 'member', emailConfirmed: true, disabled: false },
   ],
   invitations: [{ id: 'i1', email: 'pending@acme.example', role: 'member', expiresAt: '2026-10-07T10:00:00Z', createdAt: '2026-09-30T10:00:00Z', invitedBy: 'owner@acme.example' }],
 };
@@ -120,6 +120,29 @@ describe('team pages', () => {
       await user.click(within(memberRow).getByRole('button', { name: 'Remove' }));
 
       expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    });
+
+    it('disables a user after confirmation and offers to enable a disabled one', async () => {
+      vi.stubGlobal('confirm', vi.fn(() => true));
+      const withDisabled: Team = { ...team, users: [team.users[0] ?? (() => { throw new Error('fixture'); })(), { id: 'u3', email: 'off@acme.example', role: 'member', emailConfirmed: true, disabled: true }, ...team.users.slice(1)] };
+      const calls = mockFetch(
+        csrfThen((call) => {
+          if (call.method === 'POST') return { body: team.users[1] };
+          return { body: withDisabled };
+        }),
+      );
+      const user = userEvent.setup();
+      renderAt('/users', page);
+
+      const activeRow = (await screen.findByText('member@acme.example')).closest('tr');
+      const disabledRow = screen.getByText('off@acme.example').closest('tr');
+      if (activeRow === null || disabledRow === null) throw new Error('rows missing');
+      expect(within(disabledRow).getByText('Disabled')).toBeInTheDocument();
+      await user.click(within(activeRow).getByRole('button', { name: 'Disable' }));
+      await user.click(within(disabledRow).getByRole('button', { name: 'Enable' }));
+
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/portal/users/u2/disable')).toBe(true));
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/portal/users/u3/enable')).toBe(true));
     });
 
     it('cancels a pending invitation', async () => {

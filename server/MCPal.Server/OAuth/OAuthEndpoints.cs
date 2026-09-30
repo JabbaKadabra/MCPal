@@ -22,7 +22,7 @@ internal sealed record ClientRegistrationResponse(
     [property: JsonPropertyName("response_types")] string[] ResponseTypes,
     [property: JsonPropertyName("client_id_issued_at")] long ClientIdIssuedAt);
 
-internal sealed record AuthorizeContextResponse(string ClientName, string RedirectHost, string? SignedInCompany);
+internal sealed record AuthorizeContextResponse(string ClientName, string RedirectHost, string? SignedInEmail, string? SignedInCompany);
 
 internal sealed record AuthorizeSubmitRequest(
     [property: JsonPropertyName("client_id")] string? ClientId,
@@ -32,9 +32,7 @@ internal sealed record AuthorizeSubmitRequest(
     [property: JsonPropertyName("code_challenge_method")] string? CodeChallengeMethod,
     [property: JsonPropertyName("state")] string? State,
     [property: JsonPropertyName("scope")] string? Scope,
-    [property: JsonPropertyName("resource")] string? Resource,
-    [property: JsonPropertyName("api_key")] string? ApiKey,
-    [property: JsonPropertyName("use_session")] bool UseSession);
+    [property: JsonPropertyName("resource")] string? Resource);
 
 internal sealed record RedirectResponse([property: JsonPropertyName("redirectUrl")] string RedirectUrl);
 
@@ -165,15 +163,14 @@ internal static class OAuthEndpoints
             return Error(400, validation.Error?.Error ?? "invalid_request", validation.Error?.Description ?? "Invalid request.");
         }
 
-        var signedIn = await SessionCompanyAsync(request.HttpContext, users, companies, cancellationToken);
-        return Results.Json(new AuthorizeContextResponse(authorize.Client.ClientName, new Uri(authorize.RedirectUri).Host, signedIn?.Name));
+        var signedIn = await SessionAsync(request.HttpContext, users, companies, cancellationToken);
+        return Results.Json(new AuthorizeContextResponse(authorize.Client.ClientName, new Uri(authorize.RedirectUri).Host, signedIn?.User.Email, signedIn?.Company.Name));
     }
 
     private static async Task<IResult> AuthorizeAsync(
         HttpContext http,
         AuthorizeSubmitRequest? body,
         IOAuthService oauth,
-        IApiKeyService apiKeys,
         UserManager<PortalUser> users,
         ICompanyService companies,
         IAntiforgery antiforgery,
@@ -197,57 +194,38 @@ internal static class OAuthEndpoints
             return Error(400, validation.Error?.Error ?? "invalid_request", validation.Error?.Description ?? "Invalid request.");
         }
 
-        Guid companyId;
-        Guid? apiKeyId = null;
-        if (body.UseSession)
+        try
         {
-            try
-            {
-                await antiforgery.ValidateRequestAsync(http);
-            }
-            catch (AntiforgeryValidationException)
-            {
-                return Error(400, "invalid_request", "Invalid or missing anti-forgery token.");
-            }
-
-            if (await SessionCompanyAsync(http, users, companies, cancellationToken) is not { } company)
-            {
-                return Error(401, "login_required", "Sign in to the portal first.");
-            }
-
-            companyId = company.Id;
+            await antiforgery.ValidateRequestAsync(http);
         }
-        else
+        catch (AntiforgeryValidationException)
         {
-            var key = string.IsNullOrWhiteSpace(body.ApiKey) ? null : await apiKeys.ValidateAsync(body.ApiKey.Trim(), cancellationToken);
-            if (key is null)
-            {
-                return Error(401, "invalid_key", "The API key is missing, invalid, expired or revoked.");
-            }
-
-            if (key.Purpose == ApiKeyPurpose.Bridge)
-            {
-                return Error(403, "key_not_allowed", "This key can only be used by a bridge.");
-            }
-
-            companyId = key.CompanyId;
-            apiKeyId = key.ApiKeyId;
+            return Error(400, "invalid_request", "Invalid or missing anti-forgery token.");
         }
 
-        var code = await oauth.IssueCodeAsync(authorize, companyId, apiKeyId, cancellationToken);
+        // The only way to authorize a client is the portal login: the token acts as the signed-in user.
+        if (await SessionAsync(http, users, companies, cancellationToken) is not { } session)
+        {
+            return Error(401, "login_required", "Sign in to the portal first.");
+        }
+
+        var code = await oauth.IssueCodeAsync(authorize, session.Company.Id, session.User.Id, cancellationToken);
         return Results.Json(new RedirectResponse(BuildRedirect(authorize.RedirectUri, authorize.State, code: code)));
     }
 
-    private static async Task<Company?> SessionCompanyAsync(HttpContext http, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
+    private sealed record Session(PortalUser User, Company Company);
+
+    /// <summary>The signed-in portal user with their company. Null without a session, for a disabled user or a disabled company.</summary>
+    private static async Task<Session?> SessionAsync(HttpContext http, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
     {
         var result = await http.AuthenticateAsync(IdentityConstants.ApplicationScheme);
-        if (!result.Succeeded || await users.GetUserAsync(result.Principal) is not { } user)
+        if (!result.Succeeded || await users.GetUserAsync(result.Principal) is not { Disabled: false } user)
         {
             return null;
         }
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return company is { Disabled: false } ? company : null;
+        return company is { Disabled: false } ? new Session(user, company) : null;
     }
 
     private static string BuildRedirect(string redirectUri, string? state, string? code = null, OAuthError? error = null)

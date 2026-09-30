@@ -1,7 +1,7 @@
 namespace MCPal.Server.Tenancy;
 
-/// <param name="Purpose">Purpose of the key the token was issued from; null for tokens without a key.</param>
-internal sealed record ValidatedAccessToken(Guid CompanyId, Guid? ApiKeyId, string ClientId, ApiKeyPurpose? Purpose, IReadOnlyList<string>? AllowedServers);
+/// <summary>An OAuth access token always belongs to a portal user of the company.</summary>
+internal sealed record ValidatedAccessToken(Guid CompanyId, string UserId, string ClientId);
 
 /// <summary>Validates opaque OAuth access tokens issued by the built-in authorization server.</summary>
 internal interface IAccessTokenValidator

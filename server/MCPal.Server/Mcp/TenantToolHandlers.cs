@@ -34,6 +34,6 @@ internal sealed class TenantToolHandlers(ConnectionRegistry registry, CallRelay 
 
     private ListToolsResult ListTools(CallerIdentity caller)
     {
-        return new ListToolsResult { Tools = [.. registry.Tools(caller.CompanyId).Where(registered => caller.Allows(registered.ServerName)).Select(registered => registered.Listing)] };
+        return new ListToolsResult { Tools = [.. registry.Tools(caller.CompanyId).Select(registered => registered.Listing)] };
     }
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { api } from '../api/client';
-import type { ApiKey, CreatedApiKey, KeyPurpose } from '../api/types';
+import type { CreatedApiKey, KeyPurpose } from '../api/types';
 import { useMe } from '../components/useMe';
 import { CopyButton } from '../components/CopyButton';
 import { ErrorText } from '../components/ErrorText';
@@ -10,25 +10,14 @@ import { t, type MessageKey } from '../i18n';
 
 const keysQueryKey = ['keys'] as const;
 
-const purposes: KeyPurpose[] = ['client', 'bridge', 'any'];
+const purposes: KeyPurpose[] = ['personal', 'bridge'];
 
-/** Key purposes wear the cable colours: orange for the bridge side, blue for Claude, both for legacy keys. */
-const purposeTone: Record<KeyPurpose, TagTone> = { bridge: 'bridge', client: 'claude', any: 'any' };
+/** Key purposes wear the cable colours: orange for the bridge side, blue for Claude. */
+const purposeTone: Record<KeyPurpose, TagTone> = { bridge: 'bridge', personal: 'claude' };
 
 /** The key works until the end of the chosen local day. */
 function endOfDay(date: string): string {
   return new Date(`${date}T23:59:59`).toISOString();
-}
-
-function parseServers(text: string): string[] {
-  return text
-    .split(',')
-    .map((server) => server.trim())
-    .filter((server) => server.length > 0);
-}
-
-function servers(key: ApiKey): string {
-  return key.allowedServers.length === 0 ? t('keys.allServers') : key.allowedServers.join(', ');
 }
 
 function formatDate(value: string | null): string {
@@ -37,29 +26,24 @@ function formatDate(value: string | null): string {
 
 export function KeysPage() {
   const [name, setName] = useState('');
-  const [purpose, setPurpose] = useState<KeyPurpose>('client');
-  const [serversText, setServersText] = useState('');
+  const [purpose, setPurpose] = useState<KeyPurpose>('personal');
   const [expiresOn, setExpiresOn] = useState('');
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const queryClient = useQueryClient();
   const keys = useQuery({ queryKey: keysQueryKey, queryFn: api.keys });
   const me = useMe();
-  // Members create keys for themselves to use Claude; bridge keys and legacy 'any' keys are for owners.
-  const allowedPurposes = me.data?.role === 'member' ? purposes.filter((option) => option === 'client') : purposes;
-  const connections = useQuery({ queryKey: ['connections'], queryFn: api.connections });
-  const suggestions = [...new Set(connections.data?.flatMap((connection) => connection.servers.map((server) => server.name)) ?? [])];
-  const showCreator = me.data?.role !== 'member';
+  // Members create personal access tokens for themselves; bridge keys are for owners.
+  const allowedPurposes = me.data?.role === 'member' ? purposes.filter((option) => option === 'personal') : purposes;
+  const isOwner = me.data?.role !== 'member';
   const create = useMutation({
     mutationFn: () =>
       api.createKey(name, {
         purpose,
-        allowedServers: purpose === 'bridge' ? [] : parseServers(serversText),
         ...(expiresOn === '' ? {} : { expiresAt: endOfDay(expiresOn) }),
       }),
     onSuccess: async (key) => {
       setCreated(key);
       setName('');
-      setServersText('');
       setExpiresOn('');
       await queryClient.invalidateQueries({ queryKey: keysQueryKey });
     },
@@ -106,23 +90,6 @@ export function KeysPage() {
               ))}
             </select>
           </label>
-          {purpose !== 'bridge' && (
-            <label className="grow">
-              {t('keys.servers')}
-              <input
-                value={serversText}
-                onChange={(e) => setServersText(e.target.value)}
-                placeholder={t('keys.serversPlaceholder')}
-                list="known-servers"
-                autoComplete="off"
-              />
-              <datalist id="known-servers">
-                {suggestions.map((server) => (
-                  <option key={server} value={server} />
-                ))}
-              </datalist>
-            </label>
-          )}
           <label>
             {t('keys.expires')}
             <input type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
@@ -132,7 +99,6 @@ export function KeysPage() {
           </button>
         </form>
         <p className="muted">{t(`keys.purpose.${purpose}.help` satisfies MessageKey)}</p>
-        {purpose !== 'bridge' && <p className="muted">{t('keys.serversHelp')}</p>}
       </section>
       <ErrorText error={create.error ?? revoke.error} />
 
@@ -145,9 +111,9 @@ export function KeysPage() {
                 <th>{t('keys.col.name')}</th>
                 <th>{t('keys.col.prefix')}</th>
                 <th>{t('keys.col.purpose')}</th>
-                <th>{t('keys.col.servers')}</th>
                 <th>{t('keys.col.created')}</th>
-                {showCreator && <th>{t('keys.col.createdBy')}</th>}
+                {isOwner && <th>{t('keys.col.user')}</th>}
+                {isOwner && <th>{t('keys.col.createdBy')}</th>}
                 <th>{t('keys.col.expires')}</th>
                 <th>{t('keys.col.lastUsed')}</th>
                 <th>{t('keys.col.status')}</th>
@@ -164,9 +130,9 @@ export function KeysPage() {
                   <td>
                     <Tag tone={purposeTone[key.purpose]}>{t(`keys.purposeShort.${key.purpose}` satisfies MessageKey)}</Tag>
                   </td>
-                  <td>{key.purpose === 'bridge' ? '' : servers(key)}</td>
                   <td className="when">{formatDate(key.createdAt)}</td>
-                  {showCreator && <td>{key.createdBy ?? ''}</td>}
+                  {isOwner && <td>{key.userEmail ?? ''}</td>}
+                  {isOwner && <td>{key.createdBy ?? ''}</td>}
                   <td className="when">{key.expiresAt === null ? t('keys.never') : formatDate(key.expiresAt)}</td>
                   <td className="when">{formatDate(key.lastUsedAt)}</td>
                   <td>{key.disabled ? <Tag tone="off">{t('keys.status.revoked')}</Tag> : <Tag tone="ok">{t('keys.status.active')}</Tag>}</td>

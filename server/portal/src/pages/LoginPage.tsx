@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
+import { safeReturnUrl } from '../auth/returnUrl';
 import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
 import { meQueryKey } from '../components/useMe';
@@ -12,11 +13,13 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnUrl = safeReturnUrl(searchParams.get('returnUrl'));
   const login = useMutation({
     mutationFn: () => api.login(email, password),
     onSuccess: async (me) => {
       queryClient.setQueryData(meQueryKey, me);
-      await navigate('/keys');
+      await navigate(returnUrl ?? '/keys');
     },
   });
 
@@ -31,6 +34,7 @@ export function LoginPage() {
   return (
     <AuthFrame>
       <h1>{t('auth.login.title')}</h1>
+      {returnUrl?.startsWith('/oauth/authorize') === true && <p className="muted">{t('auth.login.forClaude')}</p>}
       <form onSubmit={submit}>
         <label>
           {t('auth.login.email')}
@@ -62,9 +66,13 @@ export function LoginPage() {
       <p className="muted">
         <Link to="/forgot-password">{t('auth.login.forgot')}</Link>
       </p>
-      <p className="muted">
-        {t('auth.login.noAccount')} <Link to="/signup">{t('auth.signup.submit')}</Link>
-      </p>
+      {returnUrl === null ? (
+        <p className="muted">
+          {t('auth.login.noAccount')} <Link to="/signup">{t('auth.signup.submit')}</Link>
+        </p>
+      ) : (
+        <p className="muted">{t('auth.login.askAdmin')}</p>
+      )}
     </AuthFrame>
   );
 }

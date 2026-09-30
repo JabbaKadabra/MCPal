@@ -1,31 +1,20 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
-using MCPal.Server.OAuth;
+using MCPal.Server.Portal;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
 using MCPal.Server.Tests.Infrastructure;
-using MCPal.Contracts;
-using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 
 namespace MCPal.Server.Tests.Tenancy;
 
-/// <summary>Purpose (bridge / client / any) and server restrictions of API keys, on the tunnel, on /mcp and through OAuth.</summary>
+/// <summary>Bridge keys open tunnels only; personal access tokens and OAuth tokens work on /mcp only.</summary>
 [TestFixture]
 internal sealed class ApiKeyPurposeTests
 {
-    private static readonly string[] ClaudeRedirects = ["https://claude.ai/api/mcp/auth_callback"];
-
     private static CancellationToken Ct => TestContext.CurrentContext.CancellationToken;
-
-    private static async Task<CreatedApiKey> CreateKeyAsync(ServerWebApplicationFactory factory, Guid companyId, ApiKeyPurpose purpose, params string[] allowedServers)
-    {
-        await using var scope = factory.Services.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<IApiKeyService>().CreateAsync(companyId, purpose.ToString(), null, purpose, allowedServers, Ct);
-    }
 
     private static async Task<McpClient> ConnectAsync(ServerWebApplicationFactory factory, string bearer)
     {
@@ -49,39 +38,12 @@ internal sealed class ApiKeyPurposeTests
         return response.StatusCode;
     }
 
-    private static async Task<string> IssueAccessTokenAsync(ServerWebApplicationFactory factory, Guid companyId, Guid apiKeyId)
-    {
-        var token = "oauth-test-token-" + Guid.NewGuid().ToString("N");
-        await using var scope = factory.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MCPalDbContext>();
-        db.OAuthTokens.Add(new OAuthToken
-        {
-            Hash = ApiKeyService.Hash(token),
-            Kind = OAuthTokenKind.Access,
-            CompanyId = companyId,
-            ApiKeyId = apiKeyId,
-            ClientId = "claude",
-            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-        });
-        await db.SaveChangesAsync(Ct);
-        return token;
-    }
-
-    private static Task<CallToolResponse> Answer(string text) => Task.FromResult(FakeBridge.Text(text));
-
-    private static BridgeCatalog TwoServers() => new("fake", "1.0", ProtocolVersion.Current,
-    [
-        new ServerCatalog("jira", [new ToolDescriptor("search", null, "Find", "{\"type\":\"object\"}", null)]),
-        new ServerCatalog("hr", [new ToolDescriptor("salaries", null, "Secret", "{\"type\":\"object\"}", null)]),
-    ]);
-
     [Test]
-    public async Task Tunnel_ClientKey_IsRefused()
+    public async Task Tunnel_PersonalAccessToken_IsRefused()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var clientKey = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client);
-        await using var connection = factory.CreateBridgeConnection(clientKey.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.PersonalKey);
 
         var act = async () => await connection.StartAsync(Ct);
 
@@ -89,14 +51,26 @@ internal sealed class ApiKeyPurposeTests
         error.Which.Message.Should().Contain("403");
     }
 
-    [TestCase(ApiKeyPurpose.Bridge)]
-    [TestCase(ApiKeyPurpose.Any)]
-    public async Task Tunnel_BridgeAndAnyKeys_AreAccepted(ApiKeyPurpose purpose)
+    [Test]
+    public async Task Tunnel_OAuthToken_IsRefused()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var key = await CreateKeyAsync(factory, acme.CompanyId, purpose);
-        await using var bridge = await FakeBridge.StartAsync(factory, key.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Answer("x"), Ct);
+        var token = await factory.IssueAccessTokenAsync(acme.CompanyId, acme.OwnerUserId, "claude", Ct);
+        await using var connection = factory.CreateBridgeConnection(token);
+
+        var act = async () => await connection.StartAsync(Ct);
+
+        var error = await act.Should().ThrowAsync<HttpRequestException>();
+        error.Which.Message.Should().Contain("403");
+    }
+
+    [Test]
+    public async Task Tunnel_BridgeKey_IsAccepted()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
 
         bridge.RegisterResult?.Accepted.Should().BeTrue();
     }
@@ -106,21 +80,18 @@ internal sealed class ApiKeyPurposeTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var bridgeKey = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Bridge);
 
-        var status = await PostMcpAsync(factory, bridgeKey.RawKey);
+        var status = await PostMcpAsync(factory, acme.BridgeKey);
 
         status.Should().Be(HttpStatusCode.Forbidden);
     }
 
-    [TestCase(ApiKeyPurpose.Client)]
-    [TestCase(ApiKeyPurpose.Any)]
-    public async Task Mcp_ClientAndAnyKeys_AreAccepted(ApiKeyPurpose purpose)
+    [Test]
+    public async Task Mcp_PersonalAccessToken_IsAccepted()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var key = await CreateKeyAsync(factory, acme.CompanyId, purpose);
-        await using var client = await ConnectAsync(factory, key.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
 
@@ -128,139 +99,50 @@ internal sealed class ApiKeyPurposeTests
     }
 
     [Test]
-    public async Task ListTools_KeyRestrictedToServer_ListsOnlyThatServer()
+    public async Task Mcp_OAuthToken_IsAccepted()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var restricted = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client, "jira");
-        var unrestricted = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, TwoServers(), _ => Answer("x"), Ct);
-        await using var restrictedClient = await ConnectAsync(factory, restricted.RawKey);
-        await using var unrestrictedClient = await ConnectAsync(factory, unrestricted.RawKey);
-
-        var restrictedTools = await restrictedClient.ListToolsAsync(cancellationToken: Ct);
-        var allTools = await unrestrictedClient.ListToolsAsync(cancellationToken: Ct);
-
-        restrictedTools.Select(t => t.Name).Should().Equal("jira__search");
-        allTools.Select(t => t.Name).Should().BeEquivalentTo("jira__search", "hr__salaries");
-    }
-
-    [Test]
-    public async Task ListTools_ServerRestrictionIsCaseInsensitive()
-    {
-        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
-        var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var restricted = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client, "JIRA");
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, TwoServers(), _ => Answer("x"), Ct);
-        await using var client = await ConnectAsync(factory, restricted.RawKey);
-
-        var tools = await client.ListToolsAsync(cancellationToken: Ct);
-
-        tools.Select(t => t.Name).Should().Equal("jira__search");
-    }
-
-    [Test]
-    public async Task CallTool_ServerOutsideScope_ReturnsNotAvailableAndNeverReachesTheBridge()
-    {
-        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
-        var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var restricted = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client, "jira");
-        var reachedTools = new List<string>();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, TwoServers(), request =>
-        {
-            reachedTools.Add(request.ToolName);
-            return Answer("data");
-        }, Ct);
-        await using var client = await ConnectAsync(factory, restricted.RawKey);
-
-        var forbidden = await client.CallToolAsync("hr__salaries", cancellationToken: Ct);
-        var unknown = await client.CallToolAsync("nope__nothing", cancellationToken: Ct);
-        var allowed = await client.CallToolAsync("jira__search", cancellationToken: Ct);
-
-        forbidden.IsError.Should().BeTrue();
-        forbidden.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Single().Text.Should().Be(
-            unknown.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Single().Text.Replace("nope__nothing", "hr__salaries", StringComparison.Ordinal));
-        allowed.IsError.Should().NotBe(true);
-        reachedTools.Should().Equal("search");
-    }
-
-    [Test]
-    public async Task Mcp_OAuthTokenIssuedFromRestrictedKey_SeesOnlyAllowedServers()
-    {
-        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
-        var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var restricted = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client, "jira");
-        var token = await IssueAccessTokenAsync(factory, acme.CompanyId, restricted.Id);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, TwoServers(), _ => Answer("x"), Ct);
+        var token = await factory.IssueAccessTokenAsync(acme.CompanyId, acme.OwnerUserId, "claude", Ct);
         await using var client = await ConnectAsync(factory, token);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
-        var forbidden = await client.CallToolAsync("hr__salaries", cancellationToken: Ct);
 
-        tools.Select(t => t.Name).Should().Equal("jira__search");
-        forbidden.IsError.Should().BeTrue();
+        tools.Should().BeEmpty();
     }
 
     [Test]
-    public async Task Mcp_OAuthTokenOfBridgeKey_IsRefused()
+    public async Task Mcp_PersonalAccessTokenOfDisabledUser_IsUnauthorized()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var bridgeKey = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Bridge);
-        var token = await IssueAccessTokenAsync(factory, acme.CompanyId, bridgeKey.Id);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<MCPalDbContext>().Users.Where(u => u.Id == ben.UserId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.Disabled, true), Ct);
+        }
+
+        var status = await PostMcpAsync(factory, ben.PersonalKey);
+
+        status.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task Mcp_OAuthTokenOfDisabledUser_IsUnauthorized()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        var token = await factory.IssueAccessTokenAsync(acme.CompanyId, ben.UserId, "claude", Ct);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<MCPalDbContext>().Users.Where(u => u.Id == ben.UserId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.Disabled, true), Ct);
+        }
 
         var status = await PostMcpAsync(factory, token);
 
-        status.Should().Be(HttpStatusCode.Forbidden);
+        status.Should().Be(HttpStatusCode.Unauthorized);
     }
-
-    [Test]
-    public async Task Authorize_BridgeKey_IsRefusedWithClearMessage()
-    {
-        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
-        var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var bridgeKey = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Bridge);
-        using var http = factory.CreateClient();
-        var clientId = await RegisterClientAsync(http);
-
-        using var response = await AuthorizeAsync(http, clientId, bridgeKey.RawKey);
-
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
-        body.GetProperty("error").GetString().Should().Be("key_not_allowed");
-        body.GetProperty("error_description").GetString().Should().Be("This key can only be used by a bridge.");
-    }
-
-    [Test]
-    public async Task Authorize_ClientKey_IssuesCode()
-    {
-        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
-        var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var clientKey = await CreateKeyAsync(factory, acme.CompanyId, ApiKeyPurpose.Client, "jira");
-        using var http = factory.CreateClient();
-        var clientId = await RegisterClientAsync(http);
-
-        using var response = await AuthorizeAsync(http, clientId, clientKey.RawKey);
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    private static async Task<string> RegisterClientAsync(HttpClient http)
-    {
-        using var response = await http.PostAsJsonAsync("/oauth/register", new { client_name = "Claude", redirect_uris = ClaudeRedirects, token_endpoint_auth_method = "none" }, Ct);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
-        return body.GetProperty("client_id").GetString() ?? string.Empty;
-    }
-
-    private static async Task<HttpResponseMessage> AuthorizeAsync(HttpClient http, string clientId, string apiKey) =>
-        await http.PostAsJsonAsync("/api/oauth/authorize", new
-        {
-            client_id = clientId,
-            redirect_uri = "https://claude.ai/api/mcp/auth_callback",
-            response_type = "code",
-            code_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-            code_challenge_method = "S256",
-            state = "st4te",
-            api_key = apiKey,
-        }, Ct);
 }

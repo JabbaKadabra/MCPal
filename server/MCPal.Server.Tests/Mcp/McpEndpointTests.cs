@@ -46,8 +46,8 @@ internal sealed class McpEndpointTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search", "get"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search", "get"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
 
@@ -64,8 +64,8 @@ internal sealed class McpEndpointTests
             new ToolDescriptor("search", null, "Find", "{\"type\":\"object\"}", null),
             new ToolDescriptor("broken", null, "Bad", "not json", null),
         ])]);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, catalog, _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, catalog, _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
 
@@ -79,12 +79,12 @@ internal sealed class McpEndpointTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         CallToolRequest? seen = null;
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), request =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), request =>
         {
             seen = request;
             return Task.FromResult(FakeBridge.Text("found it"));
         }, Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__search", new Dictionary<string, object?> { ["text"] = "hello" }, cancellationToken: Ct);
 
@@ -102,8 +102,8 @@ internal sealed class McpEndpointTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var response = new CallToolResponse(false, "[{\"type\":\"text\",\"text\":\"21.5\"}]", null, "{\"temp\":21.5}", "{\"source\":\"station-7\"}");
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("wx__weather", cancellationToken: Ct);
 
@@ -117,8 +117,8 @@ internal sealed class McpEndpointTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var response = new CallToolResponse(false, "[{\"type\":\"text\",\"text\":\"ok\"}]", null, "{broken", "[not an object");
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("wx", "weather"), _ => Task.FromResult(response), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("wx__weather", cancellationToken: Ct);
 
@@ -135,8 +135,8 @@ internal sealed class McpEndpointTests
         var catalog = new BridgeCatalog("fake", "1.0", ProtocolVersion.Current, [new ServerCatalog("wx", [
             new ToolDescriptor("weather", null, "W", "{\"type\":\"object\"}", null, "{\"type\":\"object\",\"properties\":{\"temp\":{\"type\":\"number\"}}}"),
         ])]);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, catalog, _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, catalog, _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
 
@@ -149,8 +149,8 @@ internal sealed class McpEndpointTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var oversize = FakeBridge.Text(new string('x', 11 * 1024 * 1024));
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "big"), _ => Task.FromResult(oversize), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "big"), _ => Task.FromResult(oversize), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
         var clock = System.Diagnostics.Stopwatch.StartNew();
 
         var result = await client.CallToolAsync("kb__big", cancellationToken: Ct);
@@ -164,9 +164,9 @@ internal sealed class McpEndpointTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"),
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"),
             _ => Task.FromResult(new CallToolResponse(true, "[]", "backend exploded")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -179,7 +179,7 @@ internal sealed class McpEndpointTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -192,12 +192,12 @@ internal sealed class McpEndpointTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
         {
             await Task.Delay(TimeSpan.FromSeconds(30), Ct);
             return FakeBridge.Text("late");
         }, Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 
@@ -211,10 +211,10 @@ internal sealed class McpEndpointTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var globex = await factory.SeedCompanyAsync("Globex", Ct);
-        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "secret"), _ => Task.FromResult(FakeBridge.Text("acme")), Ct);
-        await using var globexBridge = await FakeBridge.StartAsync(factory, globex.RawKey, FakeBridge.CatalogWith("wiki", "read"), _ => Task.FromResult(FakeBridge.Text("globex")), Ct);
-        await using var acmeClient = await ConnectAsync(factory, acme.RawKey);
-        await using var globexClient = await ConnectAsync(factory, globex.RawKey);
+        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "secret"), _ => Task.FromResult(FakeBridge.Text("acme")), Ct);
+        await using var globexBridge = await FakeBridge.StartAsync(factory, globex.BridgeKey, FakeBridge.CatalogWith("wiki", "read"), _ => Task.FromResult(FakeBridge.Text("globex")), Ct);
+        await using var acmeClient = await ConnectAsync(factory, acme.PersonalKey);
+        await using var globexClient = await ConnectAsync(factory, globex.PersonalKey);
 
         var acmeTools = await acmeClient.ListToolsAsync(cancellationToken: Ct);
         var globexTools = await globexClient.ListToolsAsync(cancellationToken: Ct);
@@ -230,12 +230,12 @@ internal sealed class McpEndpointTests
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var globex = await factory.SeedCompanyAsync("Globex", Ct);
         var reached = false;
-        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "secret"), _ =>
+        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "secret"), _ =>
         {
             reached = true;
             return Task.FromResult(FakeBridge.Text("acme data"));
         }, Ct);
-        await using var globexClient = await ConnectAsync(factory, globex.RawKey);
+        await using var globexClient = await ConnectAsync(factory, globex.PersonalKey);
 
         var result = await globexClient.CallToolAsync("kb__secret", cancellationToken: Ct);
 
@@ -254,7 +254,7 @@ internal sealed class McpEndpointTests
         for (var i = 0; i < 4; i++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.PersonalKey);
             using var response = await client.SendAsync(request, Ct);
             statuses.Add(response.StatusCode);
         }
@@ -295,7 +295,7 @@ internal sealed class McpEndpointTests
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.PersonalKey);
         using var response = await client.SendAsync(request, Ct);
 
         response.StatusCode.Should().NotBe(HttpStatusCode.TooManyRequests).And.NotBe(HttpStatusCode.Unauthorized);

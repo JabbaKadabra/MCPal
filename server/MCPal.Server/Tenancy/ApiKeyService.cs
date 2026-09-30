@@ -13,9 +13,10 @@ internal sealed record CreatedApiKey(
     DateTimeOffset CreatedAt,
     DateTimeOffset? ExpiresAt,
     ApiKeyPurpose Purpose,
-    IReadOnlyList<string> AllowedServers);
+    string? UserId);
 
-internal sealed record ValidatedKey(Guid CompanyId, Guid ApiKeyId, ApiKeyPurpose Purpose, IReadOnlyList<string> AllowedServers);
+/// <param name="UserId">The user a personal key acts as; null for bridge keys.</param>
+internal sealed record ValidatedKey(Guid CompanyId, Guid ApiKeyId, ApiKeyPurpose Purpose, string? UserId);
 
 /// <summary>Notified after an API key is revoked, e.g. to close its tunnels.</summary>
 internal interface IApiKeyRevocationListener
@@ -23,30 +24,17 @@ internal interface IApiKeyRevocationListener
     Task OnRevokedAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken);
 }
 
-/// <param name="AllowedServers">Server names a client key may use; empty or null means all. Bridge keys take none.</param>
-/// <param name="CreatedByUserId">The portal user who creates the key, so members can manage their own keys.</param>
-internal sealed record NewApiKey(
-    string Name,
-    DateTimeOffset? ExpiresAt = null,
-    ApiKeyPurpose Purpose = ApiKeyPurpose.Any,
-    IReadOnlyList<string>? AllowedServers = null,
-    string? CreatedByUserId = null);
-
-internal static class ApiKeyServiceExtensions
+/// <param name="UserId">Required for personal keys (the user the key acts as), must be null for bridge keys.</param>
+/// <param name="CreatedByUserId">The portal user who creates the key, so owners can see who made a bridge key.</param>
+internal sealed record NewApiKey(string Name, DateTimeOffset? ExpiresAt, ApiKeyPurpose Purpose, string? UserId, string? CreatedByUserId)
 {
-    /// <summary>Creates a key without restrictions (<see cref="ApiKeyPurpose.Any"/>).</summary>
-    public static Task<CreatedApiKey> CreateAsync(this IApiKeyService service, Guid companyId, string name, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(service);
-        return service.CreateAsync(companyId, new NewApiKey(name, expiresAt), cancellationToken);
-    }
+    /// <summary>A personal access token of <paramref name="userId"/>, created by that user.</summary>
+    public static NewApiKey Personal(string name, string userId, DateTimeOffset? expiresAt = null) =>
+        new(name, expiresAt, ApiKeyPurpose.Personal, userId, userId);
 
-    public static Task<CreatedApiKey> CreateAsync(
-        this IApiKeyService service, Guid companyId, string name, DateTimeOffset? expiresAt, ApiKeyPurpose purpose, IReadOnlyList<string> allowedServers, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(service);
-        return service.CreateAsync(companyId, new NewApiKey(name, expiresAt, purpose, allowedServers), cancellationToken);
-    }
+    /// <summary>A company key for bridges.</summary>
+    public static NewApiKey Bridge(string name, string? createdByUserId = null, DateTimeOffset? expiresAt = null) =>
+        new(name, expiresAt, ApiKeyPurpose.Bridge, null, createdByUserId);
 }
 
 internal interface IApiKeyService
@@ -60,7 +48,7 @@ internal interface IApiKeyService
     /// <summary>Revokes a key of the given company. Returns false when the company owns no such key.</summary>
     Task<bool> RevokeAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken);
 
-    /// <summary>Whether the key exists, is enabled, unexpired and its company is enabled.</summary>
+    /// <summary>Whether the key exists, is enabled, unexpired, its company is enabled and (personal keys) its user is active.</summary>
     Task<bool> IsActiveAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken);
 
     /// <summary>The subset of the given keys that is active, with the company each belongs to.</summary>
@@ -85,11 +73,20 @@ internal sealed class ApiKeyService(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
 
-        var (name, expiresAt, purpose, _, createdByUserId) = request;
-        var servers = NormalizeServers(request.AllowedServers ?? []);
-        if (purpose == ApiKeyPurpose.Bridge && servers.Length > 0)
+        var (name, expiresAt, purpose, userId, createdByUserId) = request;
+        if (!Enum.IsDefined(purpose))
         {
-            throw new ArgumentException("Bridge keys cannot be restricted to servers.", nameof(request));
+            throw new ArgumentException("Unknown key purpose.", nameof(request));
+        }
+
+        if (purpose == ApiKeyPurpose.Personal && string.IsNullOrEmpty(userId))
+        {
+            throw new ArgumentException("A personal access token needs a user.", nameof(request));
+        }
+
+        if (purpose == ApiKeyPurpose.Bridge && userId is not null)
+        {
+            throw new ArgumentException("Bridge keys belong to the company, not to a user.", nameof(request));
         }
 
         var rawKey = $"{KeyPrefix}{companyId.ToString("N")[..8]}_{RandomNumberGenerator.GetString(Alphabet, SecretLength)}";
@@ -104,12 +101,12 @@ internal sealed class ApiKeyService(
             CreatedAt = now,
             ExpiresAt = expiresAt,
             Purpose = purpose,
-            AllowedServers = servers,
+            UserId = userId,
             CreatedByUserId = createdByUserId,
         };
         db.ApiKeys.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
-        return new CreatedApiKey(entity.Id, entity.Name, entity.Prefix, rawKey, entity.CreatedAt, entity.ExpiresAt, entity.Purpose, entity.AllowedServers);
+        return new CreatedApiKey(entity.Id, entity.Name, entity.Prefix, rawKey, entity.CreatedAt, entity.ExpiresAt, entity.Purpose, entity.UserId);
     }
 
     public async Task<ValidatedKey?> ValidateAsync(string rawKey, CancellationToken cancellationToken)
@@ -122,9 +119,9 @@ internal sealed class ApiKeyService(
         var hash = Hash(rawKey);
         var now = timeProvider.GetUtcNow();
         var key = await db.ApiKeys.AsNoTracking()
-            .Active(db.Companies, now)
+            .Active(db.Companies, db.Users, now)
             .Where(k => k.KeyHash == hash)
-            .Select(k => new { k.Id, k.CompanyId, k.LastUsedAt, k.Purpose, k.AllowedServers })
+            .Select(k => new { k.Id, k.CompanyId, k.LastUsedAt, k.Purpose, k.UserId })
             .FirstOrDefaultAsync(cancellationToken);
         if (key is null)
         {
@@ -136,7 +133,7 @@ internal sealed class ApiKeyService(
             await db.ApiKeys.Where(k => k.Id == key.Id).ExecuteUpdateAsync(s => s.SetProperty(k => k.LastUsedAt, now), cancellationToken);
         }
 
-        return new ValidatedKey(key.CompanyId, key.Id, key.Purpose, key.AllowedServers);
+        return new ValidatedKey(key.CompanyId, key.Id, key.Purpose, key.UserId);
     }
 
     public async Task<IReadOnlyList<ApiKey>> ListAsync(Guid companyId, CancellationToken cancellationToken)
@@ -168,7 +165,7 @@ internal sealed class ApiKeyService(
     public async Task<bool> IsActiveAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken)
     {
         return await db.ApiKeys.AsNoTracking()
-            .Active(db.Companies, timeProvider.GetUtcNow())
+            .Active(db.Companies, db.Users, timeProvider.GetUtcNow())
             .AnyAsync(k => k.Id == apiKeyId && k.CompanyId == companyId, cancellationToken);
     }
 
@@ -177,15 +174,11 @@ internal sealed class ApiKeyService(
         ArgumentNullException.ThrowIfNull(apiKeyIds);
 
         return await db.ApiKeys.AsNoTracking()
-            .Active(db.Companies, timeProvider.GetUtcNow())
+            .Active(db.Companies, db.Users, timeProvider.GetUtcNow())
             .Where(k => apiKeyIds.Contains(k.Id))
-            .Select(k => new ValidatedKey(k.CompanyId, k.Id, k.Purpose, k.AllowedServers))
+            .Select(k => new ValidatedKey(k.CompanyId, k.Id, k.Purpose, k.UserId))
             .ToListAsync(cancellationToken);
     }
-
-    /// <summary>Trims, drops blanks and duplicates (server names are compared without case).</summary>
-    private static string[] NormalizeServers(IReadOnlyList<string> servers) =>
-        [.. servers.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     internal static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 

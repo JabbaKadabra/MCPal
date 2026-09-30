@@ -28,7 +28,6 @@ const existing: ApiKey = {
   lastUsedAt: null,
   disabled: false,
   purpose: 'bridge',
-  allowedServers: [],
 };
 
 /** The page reads keys and, for server suggestions, connections. */
@@ -108,48 +107,43 @@ describe('KeysPage', () => {
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
   });
 
-  it('shows purpose and server restrictions in the key list', async () => {
-    const restricted: ApiKey = { ...existing, id: 'k2', name: 'Jira team', purpose: 'client', allowedServers: ['jira', 'wiki'] };
-    const anyKey: ApiKey = { ...existing, id: 'k3', name: 'Old key', purpose: 'any', allowedServers: [] };
-    mockFetch(withConnections([existing, restricted, anyKey]));
+  it('shows the type and the user of a key to owners', async () => {
+    const personal: ApiKey = { ...existing, id: 'k2', name: 'My laptop', purpose: 'personal', userEmail: 'anna@acme.example' };
+    mockFetch(withConnections([existing, personal]));
 
     renderPage();
 
     const bridgeRow = (await screen.findByText('HQ bridge')).closest('tr');
-    const clientRow = screen.getByText('Jira team').closest('tr');
-    const anyRow = screen.getByText('Old key').closest('tr');
-    if (bridgeRow === null || clientRow === null || anyRow === null) throw new Error('rows missing');
+    const personalRow = screen.getByText('My laptop').closest('tr');
+    if (bridgeRow === null || personalRow === null) throw new Error('rows missing');
     expect(within(bridgeRow).getByText('Bridge')).toBeInTheDocument();
-    expect(within(clientRow).getByText('Claude')).toBeInTheDocument();
-    expect(within(clientRow).getByText('jira, wiki')).toBeInTheDocument();
-    expect(within(anyRow).getByText('Bridge and Claude')).toBeInTheDocument();
-    expect(within(anyRow).getByText('All servers')).toBeInTheDocument();
+    expect(within(personalRow).getByText('Personal')).toBeInTheDocument();
+    expect(within(personalRow).getByText('anna@acme.example')).toBeInTheDocument();
   });
 
-  it('creates a Claude key by default and sends purpose, servers and expiry', async () => {
+  it('creates a personal access token by default and sends purpose and expiry', async () => {
     const calls = mockFetch((call) => {
       if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
-      if (call.method === 'POST') return { status: 201, body: { ...existing, id: 'k9', key: 'mcpal_12345678_x', purpose: 'client', allowedServers: ['jira'] } };
-      if (call.url === '/api/portal/connections') return { body: [] };
+      if (call.method === 'POST') return { status: 201, body: { ...existing, id: 'k9', key: 'mcpal_12345678_x', purpose: 'personal' } };
       return { body: [] };
     });
     const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByLabelText('Used by')).toHaveValue('client');
-    await user.type(screen.getByLabelText('Key name'), 'Jira team');
-    await user.type(screen.getByLabelText('Allowed servers'), 'jira, Wiki ,');
+    expect(await screen.findByLabelText('Type')).toHaveValue('personal');
+    await user.type(screen.getByLabelText('Key name'), 'Laptop');
     await user.type(screen.getByLabelText('Expires on'), '2030-01-31');
     await user.click(screen.getByRole('button', { name: 'Create key' }));
 
     await screen.findByTestId('created-key');
     const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
-    expect(post?.body).toMatchObject({ name: 'Jira team', purpose: 'client', allowedServers: ['jira', 'Wiki'] });
+    expect(post?.body).toMatchObject({ name: 'Laptop', purpose: 'personal' });
+    expect(post?.body).not.toHaveProperty('allowedServers');
     const expiresAt = (post?.body as { expiresAt: string }).expiresAt;
     expect(new Date(expiresAt).getFullYear()).toBe(2030);
   });
 
-  it('creates a bridge key without server restrictions and hides that field', async () => {
+  it('creates a bridge key without expiry', async () => {
     const calls = mockFetch((call) => {
       if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
       if (call.method === 'POST') return { status: 201, body: { ...existing, id: 'k9', key: 'mcpal_12345678_x' } };
@@ -158,40 +152,24 @@ describe('KeysPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.selectOptions(await screen.findByLabelText('Used by'), 'bridge');
-    expect(screen.queryByLabelText('Allowed servers')).not.toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText('Type'), 'bridge');
     await user.type(screen.getByLabelText('Key name'), 'HQ bridge');
     await user.click(screen.getByRole('button', { name: 'Create key' }));
 
     await screen.findByTestId('created-key');
     const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
-    expect(post?.body).toMatchObject({ purpose: 'bridge', allowedServers: [] });
+    expect(post?.body).toMatchObject({ purpose: 'bridge' });
     expect((post?.body as { expiresAt?: string }).expiresAt).toBeUndefined();
   });
 
-  it('suggests the servers of connected bridges', async () => {
-    mockFetch((call) => {
-      if (call.url === '/api/portal/connections') {
-        return { body: [{ bridgeName: 'hq', connectedAt: '2026-01-01T10:00:00Z', apiKeyName: null, servers: [{ name: 'jira', tools: ['a'] }], rejected: [], rejectedTools: [] }] };
-      }
-      return { body: [] };
-    });
-
-    const { container } = renderPage();
-
-    await screen.findByLabelText('Allowed servers');
-    await vi.waitFor(() => expect(container.querySelector('datalist option[value="jira"]')).not.toBeNull());
-  });
-
-  it('offers members only keys for Claude', async () => {
+  it('offers members only personal access tokens', async () => {
     mockFetch(withConnections([], 'member'));
 
     renderPage();
 
-    const select = await screen.findByLabelText('Used by');
-    await vi.waitFor(() => expect(within(select).queryByRole('option', { name: 'A bridge in your network' })).not.toBeInTheDocument());
-    expect(within(select).getByRole('option', { name: 'Claude (users)' })).toBeInTheDocument();
-    expect(within(select).queryByRole('option', { name: /legacy/ })).not.toBeInTheDocument();
+    const select = await screen.findByLabelText('Type');
+    await vi.waitFor(() => expect(within(select).queryByRole('option', { name: /Bridge key/ })).not.toBeInTheDocument());
+    expect(within(select).getByRole('option', { name: /Personal access token/ })).toBeInTheDocument();
   });
 
   it('shows who created a key to owners', async () => {

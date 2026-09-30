@@ -27,33 +27,23 @@ describe('parseAuthorizeParams', () => {
 });
 
 describe('buildAuthorizeBody', () => {
-  it('adds a trimmed API key', () => {
-    const params = parseAuthorizeParams(search);
-    expect(params).not.toBeNull();
-    if (params === null) return;
-
-    const body = buildAuthorizeBody(params, { apiKey: '  mcpal_abc  ' });
-
-    expect(body.api_key).toBe('mcpal_abc');
-    expect(body.use_session).toBeUndefined();
-    expect(body.client_id).toBe('abc');
-  });
-
-  it('marks session based authorization', () => {
+  it('carries the request parameters and no credential', () => {
     const params = parseAuthorizeParams(search);
     if (params === null) throw new Error('parse failed');
 
-    const body = buildAuthorizeBody(params, { useSession: true });
+    const body = buildAuthorizeBody(params);
 
-    expect(body.use_session).toBe(true);
-    expect(body.api_key).toBeUndefined();
+    expect(body.client_id).toBe('abc');
+    expect(body.code_challenge).toBe('chal');
+    expect(body).not.toHaveProperty('api_key');
+    expect(body).not.toHaveProperty('use_session');
   });
 
   it('omits empty optional parameters', () => {
     const params = parseAuthorizeParams('?client_id=a&redirect_uri=https%3A%2F%2Fx.example');
     if (params === null) throw new Error('parse failed');
 
-    const body = buildAuthorizeBody(params, { apiKey: 'k' });
+    const body = buildAuthorizeBody(params);
 
     expect(body.resource).toBeUndefined();
     expect(body.state).toBeUndefined();

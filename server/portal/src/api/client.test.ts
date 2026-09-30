@@ -28,15 +28,14 @@ describe('api client', () => {
     expect(posts.every((c) => c.headers['X-CSRF-TOKEN'] === 'tok-1')).toBe(true);
   });
 
-  it('sends purpose, allowed servers and expiry when creating a key', async () => {
+  it('sends purpose and expiry when creating a key', async () => {
     const calls = mockFetch((call) => (call.url === '/api/portal/csrf' ? { body: { token: 't' } } : { status: 201, body: {} }));
 
-    await api.createKey('team', { purpose: 'client', allowedServers: ['jira'], expiresAt: '2030-01-01T00:00:00.000Z' });
+    await api.createKey('team', { purpose: 'personal', expiresAt: '2030-01-01T00:00:00.000Z' });
 
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       name: 'team',
-      purpose: 'client',
-      allowedServers: ['jira'],
+      purpose: 'personal',
       expiresAt: '2030-01-01T00:00:00.000Z',
     });
   });

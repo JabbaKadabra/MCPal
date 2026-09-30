@@ -16,7 +16,8 @@ internal static class McpBearerDefaults
 }
 
 /// <summary>
-/// Authenticates <c>Authorization: Bearer</c> tokens. Values starting with <c>mcpal_</c> are API keys; anything else is an OAuth access token.
+/// Authenticates <c>Authorization: Bearer</c> tokens. Values starting with <c>mcpal_</c> are API keys (bridge keys or personal access tokens);
+/// anything else is an OAuth access token.
 /// Tokens are never read from the query string.
 /// </summary>
 internal sealed class McpBearerAuthenticationHandler(
@@ -69,19 +70,6 @@ internal sealed class McpBearerAuthenticationHandler(
     private async Task<Claim[]?> AuthenticateApiKeyAsync(string token)
     {
         var validated = await apiKeys.ValidateAsync(token, Context.RequestAborted);
-        return validated is null
-            ? null
-            : [
-                new Claim(McpalClaims.CompanyId, validated.CompanyId.ToString()),
-                new Claim(McpalClaims.ApiKeyId, validated.ApiKeyId.ToString()),
-                new Claim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey),
-                .. McpalClaims.RestrictionClaims(validated.Purpose, validated.AllowedServers),
-            ];
-    }
-
-    private async Task<Claim[]?> AuthenticateAccessTokenAsync(string token)
-    {
-        var validated = await accessTokens.ValidateAsync(token, Context.RequestAborted);
         if (validated is null)
         {
             return null;
@@ -90,20 +78,34 @@ internal sealed class McpBearerAuthenticationHandler(
         var claims = new List<Claim>
         {
             new(McpalClaims.CompanyId, validated.CompanyId.ToString()),
-            new(McpalClaims.AuthKind, McpalClaims.AuthKindOAuth),
-            new(McpalClaims.OAuthClientId, validated.ClientId),
+            new(McpalClaims.ApiKeyId, validated.ApiKeyId.ToString()),
+            new(McpalClaims.KeyPurpose, validated.Purpose.ToString()),
         };
-        if (validated.ApiKeyId is { } apiKeyId)
-        {
-            claims.Add(new Claim(McpalClaims.ApiKeyId, apiKeyId.ToString()));
-        }
 
-        // A token inherits the restrictions of the key it was issued from. Tokens from a portal session have no key.
-        if (validated.Purpose is { } purpose)
+        // A personal access token acts as its user. A bridge key has no user, so /mcp refuses it.
+        if (validated is { Purpose: ApiKeyPurpose.Personal, UserId: { } userId })
         {
-            claims.AddRange(McpalClaims.RestrictionClaims(purpose, validated.AllowedServers ?? []));
+            claims.Add(new Claim(McpalClaims.UserId, userId));
+            claims.Add(new Claim(McpalClaims.AuthKind, McpalClaims.AuthKindPat));
+        }
+        else
+        {
+            claims.Add(new Claim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey));
         }
 
         return [.. claims];
+    }
+
+    private async Task<Claim[]?> AuthenticateAccessTokenAsync(string token)
+    {
+        var validated = await accessTokens.ValidateAsync(token, Context.RequestAborted);
+        return validated is null
+            ? null
+            : [
+                new Claim(McpalClaims.CompanyId, validated.CompanyId.ToString()),
+                new Claim(McpalClaims.UserId, validated.UserId),
+                new Claim(McpalClaims.AuthKind, McpalClaims.AuthKindOAuth),
+                new Claim(McpalClaims.OAuthClientId, validated.ClientId),
+            ];
     }
 }

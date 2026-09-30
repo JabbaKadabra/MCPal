@@ -37,8 +37,8 @@ internal sealed class CancelCallTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var started = new TaskCompletionSource<string>();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 
@@ -53,7 +53,7 @@ internal sealed class CancelCallTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var started = new TaskCompletionSource<string>();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
         using var http = factory.CreateClient();
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp")
@@ -63,7 +63,7 @@ internal sealed class CancelCallTests
                 System.Text.Encoding.UTF8,
                 "application/json"),
         };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", acme.RawKey);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", acme.PersonalKey);
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Accept.ParseAdd("text/event-stream");
 
@@ -86,8 +86,8 @@ internal sealed class CancelCallTests
             configureContainer: container => container.RegisterDecorator<IBridgeInvoker>((_, _, inner) => new RecordingInvoker(inner, cancelled)));
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var started = new TaskCompletionSource<string>();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWithProtocol("1.0", "kb", "slow"), NeverAnswers(started), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWithProtocol("1.0", "kb", "slow"), NeverAnswers(started), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         var result = await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 
@@ -105,8 +105,8 @@ internal sealed class CancelCallTests
             configureContainer: container => container.RegisterDecorator<IBridgeInvoker>((_, _, inner) => new RecordingInvoker(inner, cancelled)));
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var started = new TaskCompletionSource<string>();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), NeverAnswers(started), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 

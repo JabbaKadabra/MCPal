@@ -27,6 +27,10 @@ export function UsersPage() {
     mutationFn: (id: string) => api.removeUser(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: teamQueryKey }),
   });
+  const setDisabled = useMutation({
+    mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => (disabled ? api.disableUser(id) : api.enableUser(id)),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: teamQueryKey }),
+  });
   const cancel = useMutation({
     mutationFn: (id: string) => api.cancelInvitation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: teamQueryKey }),
@@ -66,7 +70,7 @@ export function UsersPage() {
         </form>
         {invitedEmail !== null && <p role="status" className="sent">{t('users.invite.sent', { email: invitedEmail })}</p>}
       </section>
-      <ErrorText error={invite.error ?? remove.error ?? cancel.error ?? team.error} />
+      <ErrorText error={invite.error ?? remove.error ?? setDisabled.error ?? cancel.error ?? team.error} />
 
       {team.data !== undefined && (
         <>
@@ -82,19 +86,35 @@ export function UsersPage() {
               </thead>
               <tbody>
                 {team.data.users.map((member) => (
-                  <tr key={member.id}>
-                    <td>{member.email}</td>
+                  <tr key={member.id} className={member.disabled ? 'is-off' : undefined}>
+                    <td>
+                      {member.displayName != null && member.displayName !== '' ? `${member.displayName} · ` : ''}
+                      {member.email}
+                    </td>
                     <td>
                         <Tag tone={member.role === 'owner' ? 'ink' : 'plain'}>{t(`users.role.${member.role}` satisfies MessageKey)}</Tag>
                       </td>
                     <td>
-                        {member.emailConfirmed ? (
+                        {member.disabled ? (
+                          <Tag tone="off">{t('users.status.disabled')}</Tag>
+                        ) : member.emailConfirmed ? (
                           <Tag tone="ok">{t('users.status.confirmed')}</Tag>
                         ) : (
                           <Tag tone="warn">{t('users.status.unconfirmed')}</Tag>
                         )}
                       </td>
                     <td>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => {
+                          if (member.disabled || window.confirm(t('users.disableConfirm'))) {
+                            setDisabled.mutate({ id: member.id, disabled: !member.disabled });
+                          }
+                        }}
+                      >
+                        {member.disabled ? t('users.enable') : t('users.disable')}
+                      </button>{' '}
                       <button
                         type="button"
                         className="danger small"

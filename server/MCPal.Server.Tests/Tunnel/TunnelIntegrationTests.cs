@@ -51,7 +51,7 @@ internal sealed class TunnelIntegrationTests
         var seeded = await factory.SeedCompanyAsync("Acme", Ct);
         using var client = factory.CreateClient();
 
-        using var response = await client.PostAsync(new Uri($"/hub/bridge/negotiate?negotiateVersion=1&access_token={seeded.RawKey}", UriKind.Relative), null, Ct);
+        using var response = await client.PostAsync(new Uri($"/hub/bridge/negotiate?negotiateVersion=1&access_token={seeded.BridgeKey}", UriKind.Relative), null, Ct);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -62,7 +62,7 @@ internal sealed class TunnelIntegrationTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var other = await factory.SeedCompanyAsync("Other", Ct);
-        await using var connection = factory.CreateBridgeConnection(acme.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.BridgeKey);
         await connection.StartAsync(Ct);
 
         var result = await connection.InvokeAsync<RegisterResult>("Register", Catalog(), Ct);
@@ -78,7 +78,7 @@ internal sealed class TunnelIntegrationTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var connection = factory.CreateBridgeConnection(acme.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.BridgeKey);
         await connection.StartAsync(Ct);
 
         var result = await connection.InvokeAsync<RegisterResult>("Register", Catalog(protocol: "99.0"), Ct);
@@ -94,8 +94,8 @@ internal sealed class TunnelIntegrationTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var first = factory.CreateBridgeConnection(acme.RawKey);
-        await using var second = factory.CreateBridgeConnection(acme.RawKey);
+        await using var first = factory.CreateBridgeConnection(acme.BridgeKey);
+        await using var second = factory.CreateBridgeConnection(acme.BridgeKey);
         await first.StartAsync(Ct);
         await second.StartAsync(Ct);
         await first.InvokeAsync<RegisterResult>("Register", Catalog(), Ct);
@@ -111,7 +111,7 @@ internal sealed class TunnelIntegrationTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var registry = factory.Services.GetRequiredService<ConnectionRegistry>();
-        await using var connection = factory.CreateBridgeConnection(acme.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.BridgeKey);
         await connection.StartAsync(Ct);
         await connection.InvokeAsync<RegisterResult>("Register", Catalog(), Ct);
 
@@ -127,7 +127,7 @@ internal sealed class TunnelIntegrationTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var registry = factory.Services.GetRequiredService<ConnectionRegistry>();
-        await using var connection = factory.CreateBridgeConnection(acme.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.BridgeKey);
         var closed = new TaskCompletionSource();
         connection.Closed += _ =>
         {
@@ -139,7 +139,7 @@ internal sealed class TunnelIntegrationTests
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            await scope.ServiceProvider.GetRequiredService<IApiKeyService>().RevokeAsync(acme.CompanyId, acme.ApiKeyId, Ct);
+            await scope.ServiceProvider.GetRequiredService<IApiKeyService>().RevokeAsync(acme.CompanyId, acme.BridgeKeyId, Ct);
         }
 
         await closed.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
@@ -154,7 +154,7 @@ internal sealed class TunnelIntegrationTests
             configureContainer: container => container.RegisterDecorator<KeyRevokedAfterAuthentication, IApiKeyService>());
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var registry = factory.Services.GetRequiredService<ConnectionRegistry>();
-        await using var connection = factory.CreateBridgeConnection(acme.RawKey);
+        await using var connection = factory.CreateBridgeConnection(acme.BridgeKey);
         var closed = new TaskCompletionSource();
         connection.Closed += _ =>
         {

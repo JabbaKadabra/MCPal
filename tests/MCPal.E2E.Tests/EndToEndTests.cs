@@ -23,7 +23,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
@@ -41,7 +41,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__weather", Ct);
         await using var local = await E2EStack.ConnectLocalServerAsync(Ct);
 
@@ -64,7 +64,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__fail", Ct);
 
         var result = await client.CallToolAsync("test__fail", cancellationToken: Ct);
@@ -78,7 +78,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct, new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
 
         var result = await client.CallToolAsync("test__slow", new Dictionary<string, object?> { ["milliseconds"] = 5000 }, cancellationToken: Ct);
@@ -93,7 +93,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct, new() { ["Mcpal:ToolCallTimeoutSeconds"] = "2" });
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
         var clock = Stopwatch.StartNew();
 
@@ -129,7 +129,7 @@ internal sealed class EndToEndTests
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var statusFile = Path.Combine(Path.GetTempPath(), "mcpal-e2e-" + Guid.NewGuid().ToString("N"), "status.json");
         var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct, statusFile: statusFile);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
         var running = await WaitForStatusAsync(statusFile, status => status.LastRegisteredAt is not null);
@@ -193,7 +193,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__slow", Ct);
         var clock = Stopwatch.StartNew();
 
@@ -210,7 +210,7 @@ internal sealed class EndToEndTests
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var first = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
         await first.StopAsync(Ct);
@@ -233,8 +233,8 @@ internal sealed class EndToEndTests
         var globex = await stack.SeedCompanyAsync("Globex", Ct);
         using var acmeBridge = await stack.StartBridgeAsync(acme, "alpha", "acme-01", Ct);
         using var globexBridge = await stack.StartBridgeAsync(globex, "beta", "globex-01", Ct);
-        await using var acmeClient = await stack.ConnectClientAsync(acme.RawKey, Ct);
-        await using var globexClient = await stack.ConnectClientAsync(globex.RawKey, Ct);
+        await using var acmeClient = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
+        await using var globexClient = await stack.ConnectClientAsync(globex.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(acmeClient, "alpha__echo", Ct);
         await E2EStack.WaitForToolAsync(globexClient, "beta__echo", Ct);
 
@@ -251,13 +251,13 @@ internal sealed class EndToEndTests
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
-        var stale = stack.CreateTunnelConnection(acme.RawKey);
+        var stale = stack.CreateTunnelConnection(acme.BridgeKey);
         await stale.StartAsync(Ct);
         var catalog = new BridgeCatalog("hq-01", "1.0", ProtocolVersion.Current, [new ServerCatalog("test", [new ToolDescriptor("old", null, null, "{\"type\":\"object\"}", null)])]);
         await stale.InvokeAsync<RegisterResult>("Register", catalog, Ct);
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct, time);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await E2EStack.WaitForToolAsync(client, "test__old", Ct);
         var registry = stack.Services.GetRequiredService<ConnectionRegistry>();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
@@ -277,21 +277,37 @@ internal sealed class EndToEndTests
     }
 
     [Test]
-    public async Task RevokedKey_ClosesTunnelAndHidesTools()
+    public async Task RevokedBridgeKey_ClosesTunnelAndHidesTools()
+    {
+        await using var stack = await E2EStack.CreateAsync(Ct);
+        var acme = await stack.SeedCompanyAsync("Acme", Ct);
+        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
+        await using var client = await stack.ConnectClientAsync(acme.PersonalKey, Ct);
+        await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
+
+        await stack.RevokeAsync(acme, acme.BridgeKeyId, Ct);
+
+        // Revoking the bridge key closes the tunnel at once: the tools are gone for the still valid personal access token.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        while ((await client.ListToolsAsync(cancellationToken: timeout.Token)).Count > 0)
+        {
+            await Task.Delay(100, timeout.Token);
+        }
+    }
+
+    [Test]
+    public async Task RevokedPersonalToken_CannotCallTheMcpEndpointButOtherCompaniesStillCan()
     {
         await using var stack = await E2EStack.CreateAsync(Ct);
         var acme = await stack.SeedCompanyAsync("Acme", Ct);
         var other = await stack.SeedCompanyAsync("Other", Ct);
-        using var bridge = await stack.StartBridgeAsync(acme, "test", "hq-01", Ct);
-        await using var client = await stack.ConnectClientAsync(acme.RawKey, Ct);
-        await E2EStack.WaitForToolAsync(client, "test__echo", Ct);
 
-        await stack.RevokeAsync(acme, Ct);
+        await stack.RevokeAsync(acme, acme.PersonalKeyId, Ct);
 
-        // The revoked key can no longer call the MCP endpoint at all.
-        var act = async () => await stack.ConnectClientAsync(acme.RawKey, Ct);
+        var act = async () => await stack.ConnectClientAsync(acme.PersonalKey, Ct);
         await act.Should().ThrowAsync<Exception>();
-        await using var otherClient = await stack.ConnectClientAsync(other.RawKey, Ct);
+        await using var otherClient = await stack.ConnectClientAsync(other.PersonalKey, Ct);
         (await otherClient.ListToolsAsync(cancellationToken: Ct)).Should().BeEmpty();
     }
 }

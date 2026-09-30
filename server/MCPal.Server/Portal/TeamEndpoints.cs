@@ -8,7 +8,7 @@ internal sealed record InviteRequest(string? Email, string? Role);
 
 internal sealed record AcceptInvitationRequest(string? Token, string? Password);
 
-internal sealed record TeamMemberResponse(string Id, string Email, string Role, bool EmailConfirmed);
+internal sealed record TeamMemberResponse(string Id, string Email, string? DisplayName, string Role, bool EmailConfirmed, bool Disabled);
 
 internal sealed record InvitationResponse(Guid Id, string Email, string Role, DateTimeOffset ExpiresAt, DateTimeOffset CreatedAt, string? InvitedBy);
 
@@ -32,6 +32,10 @@ internal static class TeamEndpoints
         owners.MapGet("users", ListAsync);
         owners.MapPost("users", InviteAsync);
         owners.MapDelete("users/{id}", RemoveAsync);
+        owners.MapPost("users/{id}/disable", (string id, ClaimsPrincipal principal, UserManager<PortalUser> users, TeamService team, CancellationToken cancellationToken) =>
+            SetDisabledAsync(id, disabled: true, principal, users, team, cancellationToken));
+        owners.MapPost("users/{id}/enable", (string id, ClaimsPrincipal principal, UserManager<PortalUser> users, TeamService team, CancellationToken cancellationToken) =>
+            SetDisabledAsync(id, disabled: false, principal, users, team, cancellationToken));
         owners.MapDelete("invitations/{id:guid}", CancelAsync);
     }
 
@@ -46,7 +50,7 @@ internal static class TeamEndpoints
 
         var (members, invitations) = await team.ListAsync(companyId, cancellationToken);
         return Results.Json(new TeamResponse(
-            [.. members.Select(m => new TeamMemberResponse(m.Id, m.Email, RoleName(m.Role), m.EmailConfirmed))],
+            [.. members.Select(m => new TeamMemberResponse(m.Id, m.Email, m.DisplayName, RoleName(m.Role), m.EmailConfirmed, m.Disabled))],
             [.. invitations.Select(ToResponse)]));
     }
 
@@ -75,6 +79,22 @@ internal static class TeamEndpoints
         return result.Failure switch
         {
             TeamFailure.None => Results.NoContent(),
+            TeamFailure.NotFound => Results.NotFound(),
+            _ => PortalEndpoints.Problems(result.Errors),
+        };
+    }
+
+    private static async Task<IResult> SetDisabledAsync(string id, bool disabled, ClaimsPrincipal principal, UserManager<PortalUser> users, TeamService team, CancellationToken cancellationToken)
+    {
+        if (await PortalEndpoints.CompanyOfAsync(principal, users) is not { } companyId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var result = await team.SetDisabledAsync(companyId, id, disabled, cancellationToken);
+        return result.Failure switch
+        {
+            TeamFailure.None when result.Value is { } member => Results.Json(new TeamMemberResponse(member.Id, member.Email, member.DisplayName, RoleName(member.Role), member.EmailConfirmed, member.Disabled)),
             TeamFailure.NotFound => Results.NotFound(),
             _ => PortalEndpoints.Problems(result.Errors),
         };
@@ -112,7 +132,7 @@ internal static class TeamEndpoints
 
         await signIn.SignInAsync(user, isPersistent: true);
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, RoleName(user.Role)), statusCode: 201);
+        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, RoleName(user.Role), user.DisplayName), statusCode: 201);
     }
 
     private static InvitationResponse ToResponse(PendingInvitation i) => new(i.Id, i.Email, RoleName(i.Role), i.ExpiresAt, i.CreatedAt, i.InvitedBy);

@@ -1,4 +1,4 @@
-import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Team } from './types';
+import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Team, TeamMember } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -41,7 +41,7 @@ function extractErrors(body: unknown, fallback: string): { errors: string[]; cod
   return { errors: [fallback] };
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -106,6 +106,7 @@ export const api = {
     request<Me>('POST', '/api/portal/auth/signup', { companyName, email, password }),
   login: (email: string, password: string) => request<Me>('POST', '/api/portal/auth/login', { email, password }),
   logout: () => request<void>('POST', '/api/portal/auth/logout'),
+  updateMe: (displayName: string) => request<Me>('PATCH', '/api/portal/auth/me', { displayName }),
   confirmEmail: (userId: string, token: string) => request<void>('POST', '/api/portal/auth/confirm-email', { userId, token }),
   resendConfirmation: (email: string) => request<void>('POST', '/api/portal/auth/resend-confirmation', { email }),
   forgotPassword: (email: string) => request<void>('POST', '/api/portal/auth/forgot-password', { email }),
@@ -114,6 +115,8 @@ export const api = {
   team: () => request<Team>('GET', '/api/portal/users'),
   invite: (email: string, role: Role) => request<Invitation>('POST', '/api/portal/users', { email, role }),
   removeUser: (id: string) => request<void>('DELETE', `/api/portal/users/${encodeURIComponent(id)}`),
+  disableUser: (id: string) => request<TeamMember>('POST', `/api/portal/users/${encodeURIComponent(id)}/disable`),
+  enableUser: (id: string) => request<TeamMember>('POST', `/api/portal/users/${encodeURIComponent(id)}/enable`),
   cancelInvitation: (id: string) => request<void>('DELETE', `/api/portal/invitations/${id}`),
   invitationPreview: (token: string) =>
     request<InvitationPreview>('GET', `/api/portal/invitations/preview?token=${encodeURIComponent(token)}`),

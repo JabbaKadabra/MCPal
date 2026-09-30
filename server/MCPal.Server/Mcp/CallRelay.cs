@@ -35,8 +35,7 @@ internal sealed class CallRelay(
         var companyId = caller.CompanyId;
         var startedAt = timeProvider.GetUtcNow();
         var started = timeProvider.GetTimestamp();
-        // A tool outside the caller's server scope answers exactly like an unknown tool: its existence is not revealed.
-        if (!registry.TryResolve(companyId, publicName, out var tool) || !caller.Allows(tool.ServerName))
+        if (!registry.TryResolve(companyId, publicName, out var tool))
         {
             var message = $"Tool '{publicName}' is not available (bridge offline or unknown tool).";
             using var offline = telemetry.StartToolCall(companyId, string.Empty, publicName);

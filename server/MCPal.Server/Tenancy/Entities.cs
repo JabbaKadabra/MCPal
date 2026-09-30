@@ -15,17 +15,14 @@ internal sealed class Company
     public bool Disabled { get; set; }
 }
 
-/// <summary>What a key may be used for. Existing keys are <see cref="Any"/>.</summary>
+/// <summary>What a key may be used for. Every key has exactly one purpose.</summary>
 internal enum ApiKeyPurpose
 {
-    /// <summary>Opens tunnels and works as bearer token / OAuth login.</summary>
-    Any = 0,
+    /// <summary>A personal access token: bound to one portal user, works on <c>/mcp</c> with that user's rights. Refused on tunnels.</summary>
+    Personal = 0,
 
-    /// <summary>Only opens bridge tunnels. Refused on <c>/mcp</c> and at the OAuth authorize page.</summary>
+    /// <summary>Belongs to the company: only opens bridge tunnels. Refused on <c>/mcp</c>.</summary>
     Bridge = 1,
-
-    /// <summary>Only for Claude: bearer token or OAuth login. Refused on tunnels.</summary>
-    Client = 2,
 }
 
 internal sealed class ApiKey
@@ -52,8 +49,8 @@ internal sealed class ApiKey
 
     public ApiKeyPurpose Purpose { get; set; }
 
-    /// <summary>Server names this key may use on <c>/mcp</c>. Empty means all servers. Only for <see cref="ApiKeyPurpose.Client"/> and <see cref="ApiKeyPurpose.Any"/>.</summary>
-    public string[] AllowedServers { get; set; } = [];
+    /// <summary>The portal user a <see cref="ApiKeyPurpose.Personal"/> key acts as. Null for bridge keys.</summary>
+    public string? UserId { get; set; }
 
     /// <summary>The portal user who created the key. Null for keys created before users had roles.</summary>
     public string? CreatedByUserId { get; set; }
@@ -72,4 +69,16 @@ internal sealed class PortalUser : IdentityUser
 
     /// <summary>Stored as text. Every code path that creates a user sets it; the default is the least privileged role.</summary>
     public PortalRole Role { get; set; } = PortalRole.Member;
+
+    /// <summary>Shown in audit log and passed to local MCP servers. Falls back to the email address when empty.</summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>A disabled user cannot sign in, and their tokens and personal access tokens stop working. The account and its settings stay.</summary>
+    public bool Disabled { get; set; }
+
+    /// <summary>Issuer of the external identity provider (SSO) this user is linked to. Reserved for SSO.</summary>
+    public string? ExternalIssuer { get; set; }
+
+    /// <summary>Subject of the external identity (SSO). Reserved for SSO.</summary>
+    public string? ExternalSubject { get; set; }
 }

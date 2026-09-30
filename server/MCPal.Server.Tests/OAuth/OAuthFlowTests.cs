@@ -4,7 +4,10 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using MCPal.Server.Portal;
+using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
+using Microsoft.EntityFrameworkCore;
 using MCPal.Server.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -33,9 +36,18 @@ internal sealed class OAuthFlowTests
         return json.RootElement.GetProperty("client_id").GetString() ?? string.Empty;
     }
 
-    private static async Task<HttpResponseMessage> AuthorizeAsync(HttpClient http, string clientId, string challenge, string apiKey, string redirect = ClaudeRedirect, string state = "st4te", string? resource = null, string method = "S256")
+    /// <summary>A browser session of the seeded owner: the OAuth authorization needs the portal login.</summary>
+    private static async Task<PortalClient> SignInAsync(ServerWebApplicationFactory factory, string email)
     {
-        return await http.PostAsJsonAsync("/api/oauth/authorize", new
+        var portal = new PortalClient(factory);
+        using var login = await portal.PostAsync("/api/portal/auth/login", new { email, password = PortalClient.Password }, Ct);
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+        return portal;
+    }
+
+    private static async Task<HttpResponseMessage> AuthorizeAsync(PortalClient portal, string clientId, string challenge, string redirect = ClaudeRedirect, string state = "st4te", string? resource = null, string method = "S256")
+    {
+        return await portal.PostAsync("/api/oauth/authorize", new
         {
             client_id = clientId,
             redirect_uri = redirect,
@@ -44,7 +56,6 @@ internal sealed class OAuthFlowTests
             code_challenge_method = method,
             state,
             resource,
-            api_key = apiKey,
         }, Ct);
     }
 
@@ -58,6 +69,12 @@ internal sealed class OAuthFlowTests
     private static string QueryValue(string url, string key) =>
         Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(url).Query).TryGetValue(key, out var value) ? value.ToString() : string.Empty;
 
+    private static async Task DisableAsync(ServerWebApplicationFactory factory, Guid companyId, string userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        (await scope.ServiceProvider.GetRequiredService<TeamService>().SetDisabledAsync(companyId, userId, disabled: true, Ct)).Succeeded.Should().BeTrue();
+    }
+
     private static Task<HttpResponseMessage> TokenAsync(HttpClient http, Dictionary<string, string> form) =>
         http.PostAsync("/oauth/token", new FormUrlEncodedContent(form), Ct);
 
@@ -67,11 +84,11 @@ internal sealed class OAuthFlowTests
         return json.RootElement.Clone();
     }
 
-    private static async Task<(string Code, string Verifier, string ClientId)> ObtainCodeAsync(HttpClient http, string apiKey)
+    private static async Task<(string Code, string Verifier, string ClientId)> ObtainCodeAsync(HttpClient http, PortalClient portal)
     {
         var clientId = await RegisterClientAsync(http);
         var (verifier, challenge) = Pkce();
-        var redirectUrl = await RedirectUrlAsync(await AuthorizeAsync(http, clientId, challenge, apiKey));
+        var redirectUrl = await RedirectUrlAsync(await AuthorizeAsync(portal, clientId, challenge));
         return (QueryValue(redirectUrl, "code"), verifier, clientId);
     }
 
@@ -126,14 +143,16 @@ internal sealed class OAuthFlowTests
     }
 
     [Test]
-    public async Task FullFlow_RegisterAuthorizeTokenCallRefreshRevoke_WorksEndToEnd()
+    public async Task FullFlow_RegisterAuthorizeTokenCallRefreshRemoveUser_WorksEndToEnd()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
         using var http = factory.CreateClient();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("found")), Ct);
+        using var portal = await SignInAsync(factory, ben.Email);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("found")), Ct);
 
-        var (code, verifier, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
         var tokenResponse = await TokenAsync(http, CodeForm(clientId, code, verifier));
         tokenResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var tokens = await JsonBodyAsync(tokenResponse);
@@ -161,7 +180,7 @@ internal sealed class OAuthFlowTests
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
-            await scope.ServiceProvider.GetRequiredService<IApiKeyService>().RevokeAsync(acme.CompanyId, acme.ApiKeyId, Ct);
+            (await scope.ServiceProvider.GetRequiredService<TeamService>().RemoveUserAsync(acme.CompanyId, ben.UserId, Ct)).Succeeded.Should().BeTrue();
         }
 
         using var afterRevoke = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
@@ -171,16 +190,142 @@ internal sealed class OAuthFlowTests
     }
 
     [Test]
-    public async Task Authorize_InvalidApiKey_Returns401InvalidKey()
+    public async Task Authorize_NoPortalSession_Returns401LoginRequired()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         using var http = factory.CreateClient();
+        using var anonymous = new PortalClient(factory);
         var clientId = await RegisterClientAsync(http);
 
-        using var response = await AuthorizeAsync(http, clientId, Pkce().Challenge, "mcpal_00000000_" + new string('a', 40));
+        using var response = await AuthorizeAsync(anonymous, clientId, Pkce().Challenge);
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("invalid_key");
+        (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("login_required");
+    }
+
+    [Test]
+    public async Task Authorize_ApiKeyInBody_IsNotAnAuthenticationMethod()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        using var http = factory.CreateClient();
+        using var anonymous = new PortalClient(factory);
+        var clientId = await RegisterClientAsync(http);
+
+        using var response = await anonymous.PostAsync("/api/oauth/authorize", new
+        {
+            client_id = clientId,
+            redirect_uri = ClaudeRedirect,
+            response_type = "code",
+            code_challenge = Pkce().Challenge,
+            code_challenge_method = "S256",
+            api_key = acme.PersonalKey,
+        }, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task Authorize_WithoutAntiforgeryToken_Returns400()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var clientId = await RegisterClientAsync(http);
+
+        using var response = await portal.PostAsync("/api/oauth/authorize", new { client_id = clientId, redirect_uri = ClaudeRedirect, response_type = "code", code_challenge = Pkce().Challenge, code_challenge_method = "S256" }, Ct, withCsrf: false);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task Authorize_DisabledUserWithOldSession_Returns401LoginRequired()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, ben.Email);
+        await DisableAsync(factory, acme.CompanyId, ben.UserId);
+        var clientId = await RegisterClientAsync(http);
+
+        using var response = await AuthorizeAsync(portal, clientId, Pkce().Challenge);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("login_required");
+    }
+
+    [Test]
+    public async Task Token_IssuedFromSession_IsBoundToTheSignedInUser()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, ben.Email);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
+
+        using var response = await TokenAsync(http, CodeForm(clientId, code, verifier));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tokens = await scope.ServiceProvider.GetRequiredService<MCPalDbContext>().OAuthTokens.AsNoTracking().ToListAsync(Ct);
+        tokens.Should().HaveCount(2).And.OnlyContain(t => t.UserId == ben.UserId && t.CompanyId == acme.CompanyId);
+    }
+
+    [Test]
+    public async Task Token_CodeOfUserDisabledBeforeExchange_ReturnsInvalidGrant()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, ben.Email);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
+        await DisableAsync(factory, acme.CompanyId, ben.UserId);
+
+        using var response = await TokenAsync(http, CodeForm(clientId, code, verifier));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("invalid_grant");
+    }
+
+    [Test]
+    public async Task Token_RefreshAfterUserDisabled_ReturnsInvalidGrant()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, ben.Email);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
+        var tokens = await JsonBodyAsync(await TokenAsync(http, CodeForm(clientId, code, verifier)));
+        await DisableAsync(factory, acme.CompanyId, ben.UserId);
+
+        using var response = await TokenAsync(http, new() { ["grant_type"] = "refresh_token", ["client_id"] = clientId, ["refresh_token"] = tokens.GetProperty("refresh_token").GetString() ?? string.Empty });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("invalid_grant");
+    }
+
+    [Test]
+    public async Task McpEndpoint_AccessTokenOfDisabledUser_Returns401()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var ben = await factory.SeedUserAsync(acme.CompanyId, "ben@acme.example", PortalRole.Member, Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, ben.Email);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
+        var tokens = await JsonBodyAsync(await TokenAsync(http, CodeForm(clientId, code, verifier)));
+        await DisableAsync(factory, acme.CompanyId, ben.UserId);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("access_token").GetString());
+        using var response = await http.SendAsync(request, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Test]
@@ -189,8 +334,9 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
 
-        using var response = await AuthorizeAsync(http, "does-not-exist", Pkce().Challenge, acme.RawKey);
+        using var response = await AuthorizeAsync(portal, "does-not-exist", Pkce().Challenge);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await JsonBodyAsync(response)).GetProperty("error").GetString().Should().Be("invalid_client");
@@ -202,9 +348,10 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
         var clientId = await RegisterClientAsync(http);
 
-        using var response = await AuthorizeAsync(http, clientId, Pkce().Challenge, acme.RawKey, redirect: "http://localhost:9999/cb");
+        using var response = await AuthorizeAsync(portal, clientId, Pkce().Challenge, redirect: "http://localhost:9999/cb");
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -215,9 +362,10 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
         var clientId = await RegisterClientAsync(http);
 
-        var url = await RedirectUrlAsync(await AuthorizeAsync(http, clientId, "plain-challenge", acme.RawKey, method: "plain"));
+        var url = await RedirectUrlAsync(await AuthorizeAsync(portal, clientId, "plain-challenge", method: "plain"));
 
         QueryValue(url, "error").Should().Be("invalid_request");
         QueryValue(url, "state").Should().Be("st4te");
@@ -230,9 +378,10 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
         var clientId = await RegisterClientAsync(http);
 
-        var url = await RedirectUrlAsync(await AuthorizeAsync(http, clientId, Pkce().Challenge, acme.RawKey, resource: "https://other.example/mcp"));
+        var url = await RedirectUrlAsync(await AuthorizeAsync(portal, clientId, Pkce().Challenge, resource: "https://other.example/mcp"));
 
         QueryValue(url, "error").Should().Be("invalid_target");
     }
@@ -243,9 +392,10 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
         var clientId = await RegisterClientAsync(http);
 
-        var url = await RedirectUrlAsync(await AuthorizeAsync(http, clientId, Pkce().Challenge, acme.RawKey, resource: "http://localhost:8080/mcp"));
+        var url = await RedirectUrlAsync(await AuthorizeAsync(portal, clientId, Pkce().Challenge, resource: "http://localhost:8080/mcp"));
 
         QueryValue(url, "code").Should().NotBeNullOrEmpty();
     }
@@ -256,7 +406,8 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, _, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, _, clientId) = await ObtainCodeAsync(http, portal);
 
         using var response = await TokenAsync(http, CodeForm(clientId, code, Pkce().Verifier));
 
@@ -270,7 +421,8 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, verifier, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
 
         using var first = await TokenAsync(http, CodeForm(clientId, code, verifier));
         using var second = await TokenAsync(http, CodeForm(clientId, code, verifier));
@@ -285,7 +437,8 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, verifier, _) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, verifier, _) = await ObtainCodeAsync(http, portal);
         var otherClient = await RegisterClientAsync(http);
 
         using var response = await TokenAsync(http, CodeForm(otherClient, code, verifier));
@@ -296,11 +449,13 @@ internal sealed class OAuthFlowTests
     [Test]
     public async Task Token_ExpiredCode_ReturnsInvalidGrant()
     {
-        var time = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        // Starts at the real time: the portal login cookie is persistent, and the test client drops cookies that are already expired by the real clock.
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, timeProvider: time);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, verifier, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
 
         time.Advance(TimeSpan.FromMinutes(6));
         using var response = await TokenAsync(http, CodeForm(clientId, code, verifier));
@@ -311,11 +466,13 @@ internal sealed class OAuthFlowTests
     [Test]
     public async Task McpEndpoint_ExpiredAccessToken_Returns401()
     {
-        var time = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        // Starts at the real time: the portal login cookie is persistent, and the test client drops cookies that are already expired by the real clock.
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, timeProvider: time);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, verifier, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
         var tokens = await JsonBodyAsync(await TokenAsync(http, CodeForm(clientId, code, verifier)));
 
         time.Advance(TimeSpan.FromMinutes(61));
@@ -357,7 +514,8 @@ internal sealed class OAuthFlowTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         using var http = factory.CreateClient();
-        var (code, verifier, clientId) = await ObtainCodeAsync(http, acme.RawKey);
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var (code, verifier, clientId) = await ObtainCodeAsync(http, portal);
         var tokens = await JsonBodyAsync(await TokenAsync(http, CodeForm(clientId, code, verifier)));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/hub/bridge/negotiate?negotiateVersion=1");
@@ -380,6 +538,23 @@ internal sealed class OAuthFlowTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await JsonBodyAsync(response)).GetProperty("clientName").GetString().Should().Be("Claude");
+    }
+
+    [Test]
+    public async Task AuthorizeContext_SignedIn_ReturnsEmailAndCompany()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        using var http = factory.CreateClient();
+        using var portal = await SignInAsync(factory, acme.OwnerEmail);
+        var clientId = await RegisterClientAsync(http);
+
+        using var response = await portal.GetAsync(
+            $"/api/oauth/authorize/context?client_id={clientId}&redirect_uri={Uri.EscapeDataString(ClaudeRedirect)}&response_type=code&code_challenge={Pkce().Challenge}&code_challenge_method=S256&state=x", Ct);
+
+        var body = await JsonBodyAsync(response);
+        body.GetProperty("signedInEmail").GetString().Should().Be(acme.OwnerEmail);
+        body.GetProperty("signedInCompany").GetString().Should().Be("Acme");
     }
 
     private static async Task<McpClient> ConnectMcpAsync(ServerWebApplicationFactory factory, string bearer)

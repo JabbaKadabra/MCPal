@@ -325,7 +325,7 @@ internal sealed class TeamTests
     }
 
     [Test]
-    public async Task Keys_Member_CreatesOnlyClientKeysAndSeesAndRevokesOnlyOwnKeys()
+    public async Task Keys_Member_CreatesOnlyPersonalTokensAndSeesAndRevokesOnlyOwnKeys()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
@@ -336,8 +336,8 @@ internal sealed class TeamTests
 
         using var bridgeKey = await member.PostAsync("/api/portal/keys", new { name = "sneaky", purpose = "bridge" }, Ct);
         using var anyKey = await member.PostAsync("/api/portal/keys", new { name = "sneaky", purpose = "any" }, Ct);
-        using var noPurpose = await member.PostAsync("/api/portal/keys", new { name = "sneaky" }, Ct);
-        using var clientKey = await member.PostAsync("/api/portal/keys", new { name = "mine", purpose = "client" }, Ct);
+        using var clientKey = await member.PostAsync("/api/portal/keys", new { name = "mine", purpose = "personal" }, Ct);
+        using var noPurpose = await member.PostAsync("/api/portal/keys", new { name = "also mine" }, Ct);
         var memberKeys = await GetJsonAsync(member, "/api/portal/keys");
         var ownerKeys = await GetJsonAsync(owner, "/api/portal/keys");
         using var revokeForeign = await member.DeleteAsync($"/api/portal/keys/{ownerKeyId}", Ct);
@@ -345,24 +345,27 @@ internal sealed class TeamTests
         using var revokeOwn = await member.DeleteAsync($"/api/portal/keys/{mineId}", Ct);
 
         bridgeKey.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        anyKey.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        noPurpose.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        anyKey.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         clientKey.StatusCode.Should().Be(HttpStatusCode.Created);
-        memberKeys.EnumerateArray().Select(k => k.GetProperty("name").GetString()).Should().Equal("mine");
-        ownerKeys.EnumerateArray().Select(k => k.GetProperty("name").GetString()).Should().BeEquivalentTo("bridge key", "mine");
-        ownerKeys.EnumerateArray().Single(k => k.GetProperty("name").GetString() == "mine").GetProperty("createdBy").GetString().Should().Be("member@acme.example");
+        noPurpose.StatusCode.Should().Be(HttpStatusCode.Created);
+        memberKeys.EnumerateArray().Select(k => k.GetProperty("name").GetString()).Should().BeEquivalentTo("mine", "also mine");
+        ownerKeys.EnumerateArray().Select(k => k.GetProperty("name").GetString()).Should().BeEquivalentTo("bridge key", "mine", "also mine");
+        var minePat = ownerKeys.EnumerateArray().Single(k => k.GetProperty("name").GetString() == "mine");
+        minePat.GetProperty("purpose").GetString().Should().Be("personal");
+        minePat.GetProperty("userEmail").GetString().Should().Be("member@acme.example");
+        minePat.GetProperty("createdBy").GetString().Should().Be("member@acme.example");
         revokeForeign.StatusCode.Should().Be(HttpStatusCode.NotFound);
         revokeOwn.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
     [Test]
-    public async Task RemoveUser_Member_LosesAccessAndTheirClaudeKeysAreRevoked()
+    public async Task RemoveUser_Member_LosesAccessAndTheirPersonalTokensStopWorking()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
         using var _ = owner;
         using var member = await JoinAsync(factory, owner, "member@acme.example");
-        using var keyResponse = await member.PostAsync("/api/portal/keys", new { name = "mine", purpose = "client" }, Ct);
+        using var keyResponse = await member.PostAsync("/api/portal/keys", new { name = "mine", purpose = "personal" }, Ct);
         var memberKey = (await PortalClient.JsonAsync(keyResponse, Ct)).GetProperty("key").GetString() ?? string.Empty;
         var memberId = await UserIdAsync(owner, "member@acme.example");
 
@@ -388,7 +391,7 @@ internal sealed class TeamTests
         using var response = await owner.DeleteAsync($"/api/portal/users/{ownerId}", Ct);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await PortalClient.JsonAsync(response, Ct)).GetProperty("errors")[0].GetString().Should().Contain("last owner");
+        (await PortalClient.JsonAsync(response, Ct)).GetProperty("errors")[0].GetString().Should().Contain("last active owner");
         (await GetJsonAsync(owner, "/api/portal/users")).GetProperty("users").GetArrayLength().Should().Be(1);
     }
 
@@ -458,6 +461,151 @@ internal sealed class TeamTests
         var globexList = await GetJsonAsync(globex, "/api/portal/users");
 
         globexList.GetRawText().Should().NotContain("acme.example");
+    }
+
+    [Test]
+    public async Task DisableUser_Member_EndsSessionPersonalTokensAndOAuthTokens()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, companyId) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+        using var member = await JoinAsync(factory, owner, "member@acme.example");
+        using var keyResponse = await member.PostAsync("/api/portal/keys", new { name = "mine" }, Ct);
+        var memberKey = (await PortalClient.JsonAsync(keyResponse, Ct)).GetProperty("key").GetString() ?? string.Empty;
+        var memberId = await UserIdAsync(owner, "member@acme.example");
+        var oauthToken = await factory.IssueAccessTokenAsync(companyId, memberId.ToString(), "claude", Ct);
+        (await BearerStatusAsync(factory, oauthToken)).StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
+
+        using var disabled = await owner.PostAsync($"/api/portal/users/{memberId}/disable", null, Ct);
+        using var me = await member.GetAsync("/api/portal/auth/me", Ct);
+        using var keys = await member.GetAsync("/api/portal/keys", Ct);
+        using var personal = await BearerStatusAsync(factory, memberKey);
+        using var oauth = await BearerStatusAsync(factory, oauthToken);
+        var list = await GetJsonAsync(owner, "/api/portal/users");
+
+        disabled.StatusCode.Should().Be(HttpStatusCode.OK);
+        me.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        keys.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        personal.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        oauth.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        list.GetProperty("users").EnumerateArray().Single(u => u.GetProperty("email").GetString() == "member@acme.example").GetProperty("disabled").GetBoolean().Should().BeTrue();
+    }
+
+    [Test]
+    public async Task DisableUser_ThenLogin_IsRefusedLikeAWrongPassword()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+        using var member = await JoinAsync(factory, owner, "member@acme.example");
+        var memberId = await UserIdAsync(owner, "member@acme.example");
+        (await owner.PostAsync($"/api/portal/users/{memberId}/disable", null, Ct)).Dispose();
+        using var browser = new PortalClient(factory);
+
+        using var right = await browser.PostAsync("/api/portal/auth/login", new { email = "member@acme.example", password = MemberPassword }, Ct);
+        using var wrong = await browser.PostAsync("/api/portal/auth/login", new { email = "member@acme.example", password = "wrong-password-123" }, Ct);
+
+        right.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await right.Content.ReadAsStringAsync(Ct)).Should().Be(await wrong.Content.ReadAsStringAsync(Ct));
+    }
+
+    [Test]
+    public async Task EnableUser_AfterDisable_AllowsLoginAgainButDoesNotRestoreTokens()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+        using var member = await JoinAsync(factory, owner, "member@acme.example");
+        using var keyResponse = await member.PostAsync("/api/portal/keys", new { name = "mine" }, Ct);
+        var memberKey = (await PortalClient.JsonAsync(keyResponse, Ct)).GetProperty("key").GetString() ?? string.Empty;
+        var memberId = await UserIdAsync(owner, "member@acme.example");
+        (await owner.PostAsync($"/api/portal/users/{memberId}/disable", null, Ct)).Dispose();
+
+        using var enabled = await owner.PostAsync($"/api/portal/users/{memberId}/enable", null, Ct);
+        using var browser = new PortalClient(factory);
+        using var login = await browser.PostAsync("/api/portal/auth/login", new { email = "member@acme.example", password = MemberPassword }, Ct);
+        using var oldToken = await BearerStatusAsync(factory, memberKey);
+
+        enabled.StatusCode.Should().Be(HttpStatusCode.OK);
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+        oldToken.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task DisableUser_LastActiveOwner_Returns400()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+        var ownerId = await UserIdAsync(owner, "owner@acme.example");
+
+        using var response = await owner.PostAsync($"/api/portal/users/{ownerId}/disable", null, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await PortalClient.JsonAsync(response, Ct)).GetProperty("errors")[0].GetString().Should().Contain("last active owner");
+    }
+
+    [Test]
+    public async Task RemoveUser_OnlyOtherOwnerIsDisabled_IsRefused()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+        using var second = await JoinAsync(factory, owner, "second@acme.example", "owner");
+        var secondId = await UserIdAsync(owner, "second@acme.example");
+        var ownerId = await UserIdAsync(owner, "owner@acme.example");
+        (await owner.PostAsync($"/api/portal/users/{secondId}/disable", null, Ct)).Dispose();
+
+        using var response = await owner.DeleteAsync($"/api/portal/users/{ownerId}", Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task DisableUser_MemberOrOtherCompanyOrUnknown_IsRefused()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (acme, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        var (globex, _) = await SignupAsync(factory, "Globex", "boss@globex.example");
+        using var _ = acme;
+        using var __ = globex;
+        using var member = await JoinAsync(factory, acme, "member@acme.example");
+        var ownerId = await UserIdAsync(acme, "owner@acme.example");
+        var globexUser = await UserIdAsync(globex, "boss@globex.example");
+
+        using var byMember = await member.PostAsync($"/api/portal/users/{ownerId}/disable", null, Ct);
+        using var foreign = await acme.PostAsync($"/api/portal/users/{globexUser}/disable", null, Ct);
+        using var unknown = await acme.PostAsync($"/api/portal/users/{Guid.NewGuid()}/enable", null, Ct);
+
+        byMember.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        foreign.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        unknown.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Test]
+    public async Task UpdateMe_DisplayName_IsStoredTrimmedAndReturned()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+
+        using var response = await owner.PatchAsync("/api/portal/auth/me", new { displayName = "  Anna Owner  " }, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PortalClient.JsonAsync(response, Ct)).GetProperty("displayName").GetString().Should().Be("Anna Owner");
+        (await GetJsonAsync(owner, "/api/portal/auth/me")).GetProperty("displayName").GetString().Should().Be("Anna Owner");
+    }
+
+    [Test]
+    public async Task UpdateMe_TooLongDisplayName_Returns400()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
+        var (owner, _) = await SignupAsync(factory, "Acme", "owner@acme.example");
+        using var _ = owner;
+
+        using var response = await owner.PatchAsync("/api/portal/auth/me", new { displayName = new string('x', 201) }, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     private static async Task<HttpResponseMessage> BearerStatusAsync(ServerWebApplicationFactory factory, string key)

@@ -1,16 +1,15 @@
 using MCPal.Server.Storage;
-using MCPal.Server.Tenancy;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCPal.Server.OAuth;
 
-/// <summary>Revoking an API key also revokes every OAuth token issued from it.</summary>
-internal sealed class OAuthTokenRevoker(MCPalDbContext db) : IApiKeyRevocationListener
+/// <summary>Revokes the OAuth tokens of a user, e.g. when the user is disabled or removed.</summary>
+internal sealed class OAuthTokenRevoker(MCPalDbContext db)
 {
-    public async Task OnRevokedAsync(Guid companyId, Guid apiKeyId, CancellationToken cancellationToken)
+    public async Task RevokeForUserAsync(Guid companyId, string userId, CancellationToken cancellationToken)
     {
         await db.OAuthTokens
-            .Where(t => t.CompanyId == companyId && t.ApiKeyId == apiKeyId)
+            .Where(t => t.CompanyId == companyId && t.UserId == userId)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Revoked, true), cancellationToken);
     }
 }

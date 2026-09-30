@@ -8,6 +8,9 @@ using MCPal.Server.Portal;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
 using MCPal.Server.Tunnel;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -42,6 +45,14 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         {
             var configuration = provider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
             options.UseNpgsql(configuration.GetConnectionString(ConnectionStringName));
+        });
+        services.AddDataProtection().SetApplicationName("MCPal");
+        services.AddOptions<KeyManagementOptions>().Configure<IOptions<McpalOptions>, ILoggerFactory>((keys, mcpal, loggers) =>
+        {
+            if (mcpal.Value.DataProtectionPath is { Length: > 0 } path)
+            {
+                keys.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(path), loggers);
+            }
         });
         if (registerWebServices)
         {
@@ -78,7 +89,7 @@ public sealed class ServerModule(bool registerWebServices = true) : Module
         }
 
         builder.RegisterType<OAuthService>().As<IOAuthService>().As<IAccessTokenValidator>().InstancePerLifetimeScope();
-        builder.RegisterType<OAuthTokenRevoker>().As<IApiKeyRevocationListener>().InstancePerLifetimeScope();
+        builder.RegisterType<OAuthTokenRevoker>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<ApiKeyService>().As<IApiKeyService>().InstancePerLifetimeScope();
         builder.RegisterType<CompanyService>().As<ICompanyService>().InstancePerLifetimeScope();
     }

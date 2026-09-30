@@ -1,33 +1,56 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
+import { loginUrlFor } from '../auth/returnUrl';
 import { AuthFrame } from '../components/AuthFrame';
 import { ErrorText } from '../components/ErrorText';
+import { meQueryKey } from '../components/useMe';
 import { buildAuthorizeBody, buildDenyUrl, parseAuthorizeParams } from '../oauth/authorizeParams';
 import { t } from '../i18n';
 
-/** The sign-in page Claude opens. The user proves access to a company by pasting an API key or by using the portal session. */
+/**
+ * The page Claude opens. Signing in to the portal is the only way to authorize: the token Claude receives acts as the
+ * signed-in user. Without a session the page sends the user to the login and comes back here afterwards.
+ */
 export function OAuthAuthorizePage() {
-  const { search } = useLocation();
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const params = parseAuthorizeParams(search);
-  const [apiKey, setApiKey] = useState('');
+  const here = `${pathname}${search}`;
   const context = useQuery({
     queryKey: ['authorize-context', search],
     queryFn: () => api.authorizeContext(search),
     enabled: params !== null,
   });
   const authorize = useMutation({
-    mutationFn: (credential: { apiKey: string } | { useSession: true }) => {
+    mutationFn: () => {
       if (params === null) {
         throw new Error('Missing authorization parameters');
       }
-      return api.authorize(buildAuthorizeBody(params, credential));
+      return api.authorize(buildAuthorizeBody(params));
     },
     onSuccess: ({ redirectUrl }) => {
       window.location.assign(redirectUrl);
     },
   });
+  const signOut = useMutation({
+    mutationFn: api.logout,
+    onSuccess: async () => {
+      queryClient.clear();
+      queryClient.setQueryData(meQueryKey, null);
+      await navigate(loginUrlFor(here));
+    },
+  });
+
+  const signedIn = context.data?.signedInEmail != null;
+  const loginRequired = context.data !== undefined && !signedIn;
+  useEffect(() => {
+    if (loginRequired) {
+      void navigate(loginUrlFor(here), { replace: true });
+    }
+  }, [loginRequired, navigate, here]);
 
   if (params === null || context.isError) {
     return (
@@ -36,7 +59,7 @@ export function OAuthAuthorizePage() {
       </AuthFrame>
     );
   }
-  if (context.data === undefined) {
+  if (context.data === undefined || !signedIn) {
     return (
       <AuthFrame>
         <p className="muted">{t('common.loading')}</p>
@@ -44,51 +67,35 @@ export function OAuthAuthorizePage() {
     );
   }
 
-  const { clientName, redirectHost, signedInCompany } = context.data;
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    authorize.mutate({ apiKey });
-  }
-
-  const keyRejected = authorize.error instanceof ApiError && authorize.error.code === 'invalid_key';
+  const { clientName, redirectHost, signedInEmail, signedInCompany } = context.data;
+  // The session ended between loading this page and clicking: sign in again and come back.
+  const sessionGone = authorize.error instanceof ApiError && authorize.error.code === 'login_required';
 
   return (
     <AuthFrame>
       <h1>{t('oauth.title', { client: clientName })}</h1>
       <p className="muted">{t('oauth.redirectNote', { host: redirectHost })}</p>
 
-      {signedInCompany !== null && (
+      {sessionGone ? (
+        <button type="button" className="wide" onClick={() => void navigate(loginUrlFor(here))}>
+          {t('auth.signIn')}
+        </button>
+      ) : (
         <>
-          <button type="button" className="wide" onClick={() => authorize.mutate({ useSession: true })} disabled={authorize.isPending}>
-            {t('oauth.signedIn', { company: signedInCompany })}
+          <button type="button" className="wide" onClick={() => authorize.mutate()} disabled={authorize.isPending}>
+            {t('oauth.connectAs', { email: signedInEmail ?? '', company: signedInCompany ?? '' })}
           </button>
-          <p className="divider">{t('oauth.or')}</p>
+          <ErrorText error={authorize.error} />
         </>
       )}
-
-      <form onSubmit={submit}>
-        <label>
-          {t('oauth.keyLabel')}
-          <input
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={t('oauth.keyPlaceholder')}
-            autoComplete="off"
-            spellCheck={false}
-            required
-          />
-        </label>
-        {keyRejected ? <p role="alert" className="errors">{t('oauth.invalidKey')}</p> : <ErrorText error={authorize.error} />}
-        <div className="row">
-          <button type="submit" disabled={authorize.isPending}>
-            {t('oauth.submit')}
-          </button>
-          <button type="button" className="ghost" onClick={() => window.location.assign(buildDenyUrl(params))}>
-            {t('oauth.deny')}
-          </button>
-        </div>
-      </form>
+      <div className="row">
+        <button type="button" className="ghost" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
+          {t('oauth.notYou')}
+        </button>
+        <button type="button" className="ghost" onClick={() => window.location.assign(buildDenyUrl(params))}>
+          {t('oauth.deny')}
+        </button>
+      </div>
     </AuthFrame>
   );
 }

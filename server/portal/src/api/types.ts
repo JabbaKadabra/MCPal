@@ -5,13 +5,16 @@ export interface Me {
   companyId: string;
   companyName: string;
   role: Role;
+  displayName?: string | null;
 }
 
 export interface TeamMember {
   id: string;
   email: string;
+  displayName?: string | null;
   role: Role;
   emailConfirmed: boolean;
+  disabled: boolean;
 }
 
 export interface Invitation {
@@ -34,7 +37,8 @@ export interface InvitationPreview {
   role: Role;
 }
 
-export type KeyPurpose = 'any' | 'bridge' | 'client';
+/** A personal access token acts as its user; a bridge key belongs to the company and only opens tunnels. */
+export type KeyPurpose = 'personal' | 'bridge';
 
 export interface ApiKey {
   id: string;
@@ -45,15 +49,14 @@ export interface ApiKey {
   lastUsedAt: string | null;
   disabled: boolean;
   purpose: KeyPurpose;
-  /** Empty means all servers. */
-  allowedServers: string[];
+  /** The user a personal access token acts as; null for bridge keys. */
+  userEmail?: string | null;
   /** Email of the user who created the key; null for keys from before users had roles. */
   createdBy?: string | null;
 }
 
 export interface NewApiKey {
   purpose: KeyPurpose;
-  allowedServers: string[];
   /** ISO 8601 instant; omitted for a key that never expires. */
   expiresAt?: string;
 }
@@ -66,7 +69,6 @@ export interface CreatedApiKey {
   expiresAt: string | null;
   key: string;
   purpose: KeyPurpose;
-  allowedServers: string[];
 }
 
 export interface Connection {
@@ -91,6 +93,7 @@ export interface ConnectInfo {
 export interface AuthorizeContext {
   clientName: string;
   redirectHost: string;
+  signedInEmail: string | null;
   signedInCompany: string | null;
 }
 
@@ -100,7 +103,7 @@ export interface AuditEntry {
   id: string;
   occurredAt: string;
   durationMs: number;
-  authKind: 'apikey' | 'oauth';
+  authKind: 'apikey' | 'pat' | 'oauth';
   apiKeyId: string | null;
   apiKeyName: string | null;
   oauthClientId: string | null;

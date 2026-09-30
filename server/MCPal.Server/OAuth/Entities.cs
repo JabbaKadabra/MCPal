@@ -20,7 +20,8 @@ internal sealed class AuthorizationCode
 
     public Guid CompanyId { get; set; }
 
-    public Guid? ApiKeyId { get; set; }
+    /// <summary>The portal user who authorized the code.</summary>
+    public string UserId { get; set; } = string.Empty;
 
     public string RedirectUri { get; set; } = string.Empty;
 
@@ -50,7 +51,8 @@ internal sealed class OAuthToken
 
     public Guid CompanyId { get; set; }
 
-    public Guid? ApiKeyId { get; set; }
+    /// <summary>The portal user the token acts as.</summary>
+    public string UserId { get; set; } = string.Empty;
 
     public string ClientId { get; set; } = string.Empty;
 

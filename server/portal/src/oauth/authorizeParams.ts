@@ -30,16 +30,13 @@ export function parseAuthorizeParams(search: string): AuthorizeParams | null {
   };
 }
 
-export function buildAuthorizeBody(
-  params: AuthorizeParams,
-  credential: { apiKey: string } | { useSession: true },
-): Record<string, unknown> {
+/** The body of the authorization call. The user is identified by the portal session, so there is no credential in it. */
+export function buildAuthorizeBody(params: AuthorizeParams): Record<string, unknown> {
   return {
     ...params,
     resource: params.resource || undefined,
     scope: params.scope || undefined,
     state: params.state || undefined,
-    ...('apiKey' in credential ? { api_key: credential.apiKey.trim() } : { use_session: true }),
   };
 }
 

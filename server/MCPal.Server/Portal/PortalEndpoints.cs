@@ -15,12 +15,17 @@ internal sealed record SignupRequest(string? CompanyName, string? Email, string?
 
 internal sealed record LoginRequest(string? Email, string? Password);
 
+/// <param name="Purpose"><c>personal</c> (default) or <c>bridge</c>.</param>
+/// <param name="AllowedServers">Removed from the API: per-key server lists are replaced by access groups. Sending it is an error.</param>
 internal sealed record CreateKeyRequest(string? Name, DateTimeOffset? ExpiresAt, string? Purpose = null, IReadOnlyList<string>? AllowedServers = null);
 
-/// <param name="Role"><c>owner</c> or <c>member</c>.</param>
-internal sealed record MeResponse(string Email, Guid CompanyId, string CompanyName, string Role);
+internal sealed record UpdateMeRequest(string? DisplayName);
 
-/// <param name="Purpose"><c>any</c>, <c>bridge</c> or <c>client</c>.</param>
+/// <param name="Role"><c>owner</c> or <c>member</c>.</param>
+internal sealed record MeResponse(string Email, Guid CompanyId, string CompanyName, string Role, string? DisplayName = null);
+
+/// <param name="Purpose"><c>personal</c> or <c>bridge</c>.</param>
+/// <param name="UserEmail">The user a personal access token acts as; null for bridge keys.</param>
 internal sealed record ApiKeyResponse(
     Guid Id,
     string Name,
@@ -30,10 +35,10 @@ internal sealed record ApiKeyResponse(
     DateTimeOffset? LastUsedAt,
     bool Disabled,
     string Purpose,
-    IReadOnlyList<string> AllowedServers,
+    string? UserEmail,
     string? CreatedBy);
 
-internal sealed record CreatedApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string Key, string Purpose, IReadOnlyList<string> AllowedServers);
+internal sealed record CreatedApiKeyResponse(Guid Id, string Name, string Prefix, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, string Key, string Purpose);
 
 internal sealed record ServerResponse(string Name, IReadOnlyList<string> Tools);
 
@@ -71,9 +76,10 @@ internal static class PortalEndpoints
         auth.MapPost("login", LoginAsync);
         auth.MapPost("logout", LogoutAsync);
         AccountEndpoints.Map(auth);
-        auth.MapGet("me", MeAsync).RequireAuthorization(Policy);
+        auth.MapGet("me", MeAsync).RequireAuthorization(Policy).AddEndpointFilter<ActiveUserFilter>();
+        auth.MapPatch("me", UpdateMeAsync).RequireAuthorization(Policy).AddEndpointFilter<ActiveUserFilter>();
 
-        var secured = group.MapGroup(string.Empty).RequireAuthorization(Policy);
+        var secured = group.MapGroup(string.Empty).RequireAuthorization(Policy).AddEndpointFilter<ActiveUserFilter>();
         TeamEndpoints.Map(group, secured);
         secured.MapGet("keys", ListKeysAsync);
         secured.MapPost("keys", CreateKeyAsync);
@@ -151,6 +157,13 @@ internal static class PortalEndpoints
             return InvalidLogin();
         }
 
+        // A disabled user looks like a wrong password: nobody learns that the account exists.
+        if (user.Disabled)
+        {
+            await users.CheckPasswordAsync(user, request.Password);
+            return InvalidLogin();
+        }
+
         var result = await signIn.PasswordSignInAsync(user, request.Password, isPersistent: true, lockoutOnFailure: true);
         if (result.IsNotAllowed)
         {
@@ -171,7 +184,7 @@ internal static class PortalEndpoints
         }
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return Results.Json(new MeResponse(request.Email, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role)));
+        return Results.Json(new MeResponse(request.Email, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role), user.DisplayName));
     }
 
     private static async Task<IResult> LogoutAsync(SignInManager<PortalUser> signIn)
@@ -189,7 +202,33 @@ internal static class PortalEndpoints
         }
 
         var company = await companies.FindAsync(user.CompanyId, cancellationToken);
-        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role)));
+        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role), user.DisplayName));
+    }
+
+    private const int MaxDisplayNameLength = 200;
+
+    private static async Task<IResult> UpdateMeAsync(UpdateMeRequest? request, ClaimsPrincipal principal, UserManager<PortalUser> users, ICompanyService companies, CancellationToken cancellationToken)
+    {
+        if (await users.GetUserAsync(principal) is not { } user)
+        {
+            return Results.Unauthorized();
+        }
+
+        var displayName = request?.DisplayName?.Trim();
+        if (displayName is { Length: > MaxDisplayNameLength })
+        {
+            return Problems([$"The display name can have at most {MaxDisplayNameLength} characters."]);
+        }
+
+        user.DisplayName = string.IsNullOrEmpty(displayName) ? null : displayName;
+        var updated = await users.UpdateAsync(user);
+        if (!updated.Succeeded)
+        {
+            return Problems([.. updated.Errors.Select(e => e.Description)]);
+        }
+
+        var company = await companies.FindAsync(user.CompanyId, cancellationToken);
+        return Results.Json(new MeResponse(user.Email ?? string.Empty, user.CompanyId, company?.Name ?? string.Empty, TeamEndpoints.RoleName(user.Role), user.DisplayName));
     }
 
     private static async Task<IResult> ListKeysAsync(ClaimsPrincipal principal, UserManager<PortalUser> users, IApiKeyService keys, MCPalDbContext db, CancellationToken cancellationToken)
@@ -199,13 +238,14 @@ internal static class PortalEndpoints
             return Results.Unauthorized();
         }
 
-        // Owners see every key of the company, members only the ones they created.
+        // Owners see every key of the company, members only their own personal access tokens.
         var list = await keys.ListAsync(user.CompanyId, cancellationToken);
         var emails = await db.Users.AsNoTracking().Where(u => u.CompanyId == user.CompanyId).ToDictionaryAsync(u => u.Id, u => u.Email ?? string.Empty, cancellationToken);
         return Results.Json(list
-            .Where(k => user.Role == PortalRole.Owner || k.CreatedByUserId == user.Id)
+            .Where(k => user.Role == PortalRole.Owner || k.UserId == user.Id)
             .Select(k => new ApiKeyResponse(
-                k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.LastUsedAt, k.Disabled, PurposeName(k.Purpose), k.AllowedServers,
+                k.Id, k.Name, k.Prefix, k.CreatedAt, k.ExpiresAt, k.LastUsedAt, k.Disabled, PurposeName(k.Purpose),
+                k.UserId is { } owner ? emails.GetValueOrDefault(owner) : null,
                 k.CreatedByUserId is { } creator ? emails.GetValueOrDefault(creator) : null)));
     }
 
@@ -226,27 +266,28 @@ internal static class PortalEndpoints
             return Problems(["The expiry must be in the future."]);
         }
 
-        var purpose = ApiKeyPurpose.Any;
-        if (request.Purpose is { Length: > 0 } purposeText && !Enum.TryParse(purposeText, ignoreCase: true, out purpose))
+        if (request.AllowedServers is not null)
         {
-            return Problems(["The purpose must be 'any', 'bridge' or 'client'."]);
+            return Problems(["Keys cannot be restricted to servers any more. Use access groups to control what a user may use."]);
         }
 
-        // Members get access to Claude for themselves. Keys for bridges (and the legacy 'any') open tunnels and are the owners' business.
-        if (user.Role != PortalRole.Owner && (request.Purpose is null || purpose != ApiKeyPurpose.Client))
+        if (!TryParsePurpose(request.Purpose, out var purpose))
         {
-            return Problems(["Members can only create keys for Claude (purpose 'client'). Ask an owner for a bridge key."], 403);
+            return Problems(["The purpose must be 'personal' or 'bridge'."]);
         }
 
-        var servers = request.AllowedServers ?? [];
-        if (ServerRestrictionProblem(purpose, servers) is { } problem)
+        // Personal access tokens always act as the caller. Bridge keys belong to the company and are the owners' business.
+        if (purpose == ApiKeyPurpose.Bridge && user.Role != PortalRole.Owner)
         {
-            return Problems([problem]);
+            return Problems(["Only owners can create bridge keys."], 403);
         }
 
-        var created = await keys.CreateAsync(user.CompanyId, new NewApiKey(request.Name, request.ExpiresAt, purpose, servers, user.Id), cancellationToken);
+        var newKey = purpose == ApiKeyPurpose.Personal
+            ? NewApiKey.Personal(request.Name, user.Id, request.ExpiresAt)
+            : NewApiKey.Bridge(request.Name, user.Id, request.ExpiresAt);
+        var created = await keys.CreateAsync(user.CompanyId, newKey, cancellationToken);
         return Results.Json(
-            new CreatedApiKeyResponse(created.Id, created.Name, created.Prefix, created.CreatedAt, created.ExpiresAt, created.RawKey, PurposeName(created.Purpose), created.AllowedServers),
+            new CreatedApiKeyResponse(created.Id, created.Name, created.Prefix, created.CreatedAt, created.ExpiresAt, created.RawKey, PurposeName(created.Purpose)),
             statusCode: 201);
     }
 
@@ -259,7 +300,7 @@ internal static class PortalEndpoints
 
         // A key a member does not own looks like a key that does not exist.
         if (user.Role != PortalRole.Owner
-            && (await keys.ListAsync(user.CompanyId, cancellationToken)).All(k => k.Id != id || k.CreatedByUserId != user.Id))
+            && (await keys.ListAsync(user.CompanyId, cancellationToken)).All(k => k.Id != id || k.UserId != user.Id))
         {
             return Results.NotFound();
         }
@@ -297,34 +338,32 @@ internal static class PortalEndpoints
             url,
             baseUrl,
             $"claude mcp add --transport http mcpal {url}",
-            $"claude mcp add --transport http mcpal {url} --header \"Authorization: Bearer <api-key>\""));
+            $"claude mcp add --transport http mcpal {url} --header \"Authorization: Bearer <personal-access-token>\""));
     }
-
-    private const int MaxAllowedServers = 50;
 
     private static readonly string[] EmailNotConfirmedErrors = ["Confirm your email address first. Use the link in the mail we sent you, or ask for a new one."];
 
     private static string PurposeName(ApiKeyPurpose purpose) => purpose.ToString().ToLowerInvariant();
 
-    /// <summary>Servers may be named before they are online, so only their shape is checked.</summary>
-    private static string? ServerRestrictionProblem(ApiKeyPurpose purpose, IReadOnlyList<string> servers)
+    /// <summary>No purpose means a personal access token.</summary>
+    private static bool TryParsePurpose(string? text, out ApiKeyPurpose purpose)
     {
-        if (servers.Count == 0)
+        purpose = ApiKeyPurpose.Personal;
+        if (string.IsNullOrEmpty(text))
         {
-            return null;
+            return true;
         }
 
-        if (purpose == ApiKeyPurpose.Bridge)
+        switch (text.ToLowerInvariant())
         {
-            return "Bridge keys cannot be restricted to servers.";
+            case "personal":
+                return true;
+            case "bridge":
+                purpose = ApiKeyPurpose.Bridge;
+                return true;
+            default:
+                return false;
         }
-
-        if (servers.Count > MaxAllowedServers)
-        {
-            return $"At most {MaxAllowedServers} servers can be listed.";
-        }
-
-        return servers.Any(server => !ToolNaming.IsValidServerName(server)) ? "A server name is empty, longer than 200 characters or contains control characters." : null;
     }
 
     internal static async Task<Guid?> CompanyOfAsync(ClaimsPrincipal principal, UserManager<PortalUser> users) =>
@@ -359,5 +398,23 @@ internal sealed class AntiforgeryFilter(IAntiforgery antiforgery) : IEndpointFil
         }
 
         return await next(context);
+    }
+}
+
+/// <summary>
+/// Answers 401 when the signed-in user was disabled or their company was. The session cookie alone is not enough: the
+/// state is read from the database on every call, so disabling a user takes effect at once.
+/// </summary>
+internal sealed class ActiveUserFilter(UserManager<PortalUser> users, MCPalDbContext db) : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(next);
+
+        var userId = users.GetUserId(context.HttpContext.User);
+        var cancellationToken = context.HttpContext.RequestAborted;
+        var active = userId is not null && await db.Users.AsNoTracking().Active(db.Companies).AnyAsync(u => u.Id == userId, cancellationToken);
+        return active ? await next(context) : Results.Unauthorized();
     }
 }

@@ -53,8 +53,8 @@ internal sealed class ServerTelemetryTests
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var durations = Collect<double>(factory, "mcpal.tool_call.duration");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -68,9 +68,9 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"),
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"),
             _ => Task.FromResult(new CallToolResponse(true, "[]", "boom")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -83,12 +83,12 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
         {
             await Task.Delay(TimeSpan.FromSeconds(30), Ct);
             return FakeBridge.Text("late");
         }, Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 
@@ -101,7 +101,7 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -114,9 +114,9 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"),
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"),
             _ => throw new InvalidOperationException("bridge crashed"), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -130,7 +130,7 @@ internal sealed class ServerTelemetryTests
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var started = new TaskCompletionSource();
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
         {
             started.TrySetResult();
             await Task.Delay(TimeSpan.FromSeconds(30), Ct);
@@ -142,7 +142,7 @@ internal sealed class ServerTelemetryTests
         {
             Content = new StringContent("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kb__slow","arguments":{}}}""", System.Text.Encoding.UTF8, "application/json"),
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.PersonalKey);
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Accept.ParseAdd("text/event-stream");
         var call = http.SendAsync(request, cancel.Token);
@@ -162,8 +162,8 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var calls = Collect<long>(factory, "mcpal.tool_calls");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -177,8 +177,8 @@ internal sealed class ServerTelemetryTests
         var tunnels = Collect<int>(factory, "mcpal.tunnels.active");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var globex = await factory.SeedCompanyAsync("Globex", Ct);
-        await using var first = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var second = await FakeBridge.StartAsync(factory, globex.RawKey, FakeBridge.CatalogWith("wiki", "b"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var first = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var second = await FakeBridge.StartAsync(factory, globex.BridgeKey, FakeBridge.CatalogWith("wiki", "b"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
 
         tunnels.RecordObservableInstruments();
 
@@ -191,9 +191,9 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var registrations = Collect<long>(factory, "mcpal.bridge.registrations");
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var accepted = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var partial = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var rejected = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWithProtocol("99.0", "wiki", "b"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var accepted = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var partial = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "a"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var rejected = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWithProtocol("99.0", "wiki", "b"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
 
         registrations.GetMeasurementSnapshot().Select(m => (string?)m.Tags["result"]).Should().Equal("accepted", "partial", "rejected");
     }
@@ -209,7 +209,7 @@ internal sealed class ServerTelemetryTests
         for (var i = 0; i < 3; i++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.PersonalKey);
             (await client.SendAsync(request, Ct)).Dispose();
         }
 
@@ -230,12 +230,12 @@ internal sealed class ServerTelemetryTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         CallToolRequest? seen = null;
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), request =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), request =>
         {
             seen = request;
             return Task.FromResult(FakeBridge.Text("x"));
         }, Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 

@@ -23,8 +23,7 @@ const key: ApiKey = {
   expiresAt: null,
   lastUsedAt: null,
   disabled: false,
-  purpose: 'client',
-  allowedServers: [],
+  purpose: 'personal',
 };
 
 function entry(overrides: Partial<AuditEntry>): AuditEntry {
@@ -32,7 +31,7 @@ function entry(overrides: Partial<AuditEntry>): AuditEntry {
     id: 'e1',
     occurredAt: '2026-09-30T08:00:00Z',
     durationMs: 120,
-    authKind: 'apikey',
+    authKind: 'pat',
     apiKeyId: 'k1',
     apiKeyName: 'HQ bridge',
     oauthClientId: null,

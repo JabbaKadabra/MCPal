@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Cryptography;
+using MCPal.Server.OAuth;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
 using Microsoft.AspNetCore.Identity;
@@ -8,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCPal.Server.Portal;
 
-internal sealed record TeamMember(string Id, string Email, PortalRole Role, bool EmailConfirmed);
+internal sealed record TeamMember(string Id, string Email, string? DisplayName, PortalRole Role, bool EmailConfirmed, bool Disabled);
 
 internal sealed record PendingInvitation(Guid Id, string Email, PortalRole Role, DateTimeOffset ExpiresAt, DateTimeOffset CreatedAt, string? InvitedBy);
 
@@ -40,6 +41,7 @@ internal sealed class TeamService(
     MCPalDbContext db,
     UserManager<PortalUser> users,
     IApiKeyService apiKeys,
+    OAuthTokenRevoker oauthTokens,
     ICompanyService companies,
     AccountMailer mailer,
     TimeProvider timeProvider)
@@ -55,7 +57,7 @@ internal sealed class TeamService(
         var members = await db.Users.AsNoTracking()
             .Where(u => u.CompanyId == companyId)
             .OrderBy(u => u.Email)
-            .Select(u => new TeamMember(u.Id, u.Email ?? string.Empty, u.Role, u.EmailConfirmed))
+            .Select(u => new TeamMember(u.Id, u.Email ?? string.Empty, u.DisplayName, u.Role, u.EmailConfirmed, u.Disabled))
             .ToListAsync(cancellationToken);
         var emails = members.ToDictionary(m => m.Id, m => m.Email);
         var invitations = await db.Invitations.AsNoTracking()
@@ -180,8 +182,46 @@ internal sealed class TeamService(
     }
 
     /// <summary>
-    /// Removes a user of the company. The Claude keys they created stop working; keys for bridges stay, because running bridges use them.
-    /// The last owner cannot be removed.
+    /// Disables or re-enables a user of the company. Disabling ends everything the user holds: sessions (security stamp),
+    /// personal access tokens and OAuth tokens. Re-enabling restores the account only; the user creates new tokens and signs in again.
+    /// The last active owner cannot be disabled.
+    /// </summary>
+    public async Task<TeamResult<TeamMember>> SetDisabledAsync(Guid companyId, string userId, bool disabled, CancellationToken cancellationToken)
+    {
+        var target = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId, cancellationToken);
+        if (target is null)
+        {
+            return TeamResult<TeamMember>.Fail(TeamFailure.NotFound);
+        }
+
+        if (target.Disabled != disabled)
+        {
+            if (disabled && await IsLastActiveOwnerAsync(target, cancellationToken))
+            {
+                return TeamResult<TeamMember>.Fail(TeamFailure.Invalid, LastOwnerMessage("disabled"));
+            }
+
+            target.Disabled = disabled;
+            var updated = await users.UpdateAsync(target);
+            if (!updated.Succeeded)
+            {
+                return TeamResult<TeamMember>.Fail(TeamFailure.Invalid, [.. updated.Errors.Select(e => e.Description)]);
+            }
+
+
+            if (disabled)
+            {
+                await RevokeCredentialsAsync(companyId, target, cancellationToken);
+                await users.UpdateSecurityStampAsync(target);
+            }
+        }
+
+        return TeamResult<TeamMember>.Ok(ToMember(target));
+    }
+
+    /// <summary>
+    /// Removes a user of the company. Their personal access tokens and OAuth tokens stop working; keys for bridges stay, because
+    /// running bridges use them. The last active owner cannot be removed.
     /// </summary>
     public async Task<TeamResult<TeamMember>> RemoveUserAsync(Guid companyId, string userId, CancellationToken cancellationToken)
     {
@@ -191,13 +231,39 @@ internal sealed class TeamService(
             return TeamResult<TeamMember>.Fail(TeamFailure.NotFound);
         }
 
-        if (target.Role == PortalRole.Owner && await db.Users.CountAsync(u => u.CompanyId == companyId && u.Role == PortalRole.Owner, cancellationToken) <= 1)
+        if (await IsLastActiveOwnerAsync(target, cancellationToken))
         {
-            return TeamResult<TeamMember>.Fail(TeamFailure.Invalid, "The last owner cannot be removed. Make someone else an owner first.");
+            return TeamResult<TeamMember>.Fail(TeamFailure.Invalid, LastOwnerMessage("removed"));
         }
 
+        await RevokeCredentialsAsync(companyId, target, cancellationToken);
+        var removed = ToMember(target);
+        var result = await users.DeleteAsync(target);
+        return result.Succeeded
+            ? TeamResult<TeamMember>.Ok(removed)
+            : TeamResult<TeamMember>.Fail(TeamFailure.Invalid, [.. result.Errors.Select(e => e.Description)]);
+    }
+
+    private static string LastOwnerMessage(string what) => $"The last active owner cannot be {what}. Make someone else an owner first.";
+
+    private static TeamMember ToMember(PortalUser user) =>
+        new(user.Id, user.Email ?? string.Empty, user.DisplayName, user.Role, user.EmailConfirmed, user.Disabled);
+
+    /// <summary>True when the user is an active owner and no other active owner of the company exists.</summary>
+    private async Task<bool> IsLastActiveOwnerAsync(PortalUser target, CancellationToken cancellationToken)
+    {
+        if (target is not { Role: PortalRole.Owner, Disabled: false })
+        {
+            return false;
+        }
+
+        return !await db.Users.AnyAsync(u => u.CompanyId == target.CompanyId && u.Role == PortalRole.Owner && !u.Disabled && u.Id != target.Id, cancellationToken);
+    }
+
+    private async Task RevokeCredentialsAsync(Guid companyId, PortalUser target, CancellationToken cancellationToken)
+    {
         var personalKeys = await db.ApiKeys.AsNoTracking()
-            .Where(k => k.CompanyId == companyId && k.CreatedByUserId == userId && k.Purpose == ApiKeyPurpose.Client && !k.Disabled)
+            .Where(k => k.CompanyId == companyId && k.UserId == target.Id && !k.Disabled)
             .Select(k => k.Id)
             .ToListAsync(cancellationToken);
         foreach (var keyId in personalKeys)
@@ -205,11 +271,7 @@ internal sealed class TeamService(
             await apiKeys.RevokeAsync(companyId, keyId, cancellationToken);
         }
 
-        var removed = new TeamMember(target.Id, target.Email ?? string.Empty, target.Role, target.EmailConfirmed);
-        var result = await users.DeleteAsync(target);
-        return result.Succeeded
-            ? TeamResult<TeamMember>.Ok(removed)
-            : TeamResult<TeamMember>.Fail(TeamFailure.Invalid, [.. result.Errors.Select(e => e.Description)]);
+        await oauthTokens.RevokeForUserAsync(companyId, target.Id, cancellationToken);
     }
 
     private async Task<Invitation?> FindOpenInvitationAsync(string? token, CancellationToken cancellationToken)

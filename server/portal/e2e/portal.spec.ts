@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { createClaudeKey, password, signUp, unique } from './helpers';
+import { createPersonalToken, password, signUp, unique } from './helpers';
 
 test('sign up, create a key, see it only once, revoke it', async ({ page }) => {
   page.on('dialog', (dialog) => void dialog.accept());
   await signUp(page);
   const name = unique('ci-key');
 
-  const key = await createClaudeKey(page, name);
+  const key = await createPersonalToken(page, name);
   await expect(page.getByText('Copy your new key now')).toBeVisible();
 
   // The full key is gone after a reload; only the prefix is listed.

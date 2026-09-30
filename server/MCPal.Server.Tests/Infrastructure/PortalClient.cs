@@ -33,6 +33,13 @@ internal sealed class PortalClient : IDisposable
         return response;
     }
 
+    public async Task<HttpResponseMessage> PatchAsync(string url, object? body, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Patch, url) { Content = JsonContent.Create(body) };
+        await AddCsrfAsync(request, true, cancellationToken);
+        return await http.SendAsync(request, cancellationToken);
+    }
+
     public async Task<HttpResponseMessage> DeleteAsync(string url, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Delete, url);

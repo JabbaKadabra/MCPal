@@ -5,9 +5,6 @@ using MCPal.Server.Portal;
 using MCPal.Server.Storage;
 using MCPal.Server.Tenancy;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.DataProtection.KeyManagement;
-using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -82,16 +79,16 @@ internal static class ServerWebServices
         // AddIdentity sets the cookie as default authenticate scheme.
         services.PostConfigure<AuthenticationOptions>(options => options.DefaultAuthenticateScheme = McpBearerDefaults.SelectorScheme);
         services.AddAuthorizationBuilder()
-            // Keys for bridges only are refused here; tokens from a portal session have no key and no purpose.
+            // /mcp is for users: personal access tokens and OAuth tokens carry a user, bridge keys do not and are refused.
             .AddPolicy(McpBearerDefaults.McpPolicy, policy => policy
                 .AddAuthenticationSchemes(McpBearerDefaults.Scheme)
                 .RequireAuthenticatedUser()
-                .RequireAssertion(context => context.User.GetKeyPurpose() is null or ApiKeyPurpose.Any or ApiKeyPurpose.Client))
+                .RequireClaim(McpalClaims.UserId))
             .AddPolicy(McpBearerDefaults.TunnelPolicy, policy => policy
                 .AddAuthenticationSchemes(McpBearerDefaults.Scheme)
                 .RequireAuthenticatedUser()
                 .RequireClaim(McpalClaims.AuthKind, McpalClaims.AuthKindApiKey)
-                .RequireAssertion(context => context.User.GetKeyPurpose() is ApiKeyPurpose.Any or ApiKeyPurpose.Bridge));
+                .RequireAssertion(context => context.User.GetKeyPurpose() is ApiKeyPurpose.Bridge));
 
         services.AddIdentity<PortalUser, IdentityRole>(options =>
             {
@@ -150,15 +147,6 @@ internal static class ServerWebServices
                 forwarded.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
             }
         });
-        services.AddDataProtection().SetApplicationName("MCPal");
-        services.AddOptions<KeyManagementOptions>().Configure<IOptions<McpalOptions>, ILoggerFactory>((keys, mcpal, loggers) =>
-        {
-            if (mcpal.Value.DataProtectionPath is { Length: > 0 } path)
-            {
-                keys.XmlRepository = new FileSystemXmlRepository(new DirectoryInfo(path), loggers);
-            }
-        });
-
         services.AddSignalR(options =>
         {
             options.MaximumReceiveMessageSize = 10 * 1024 * 1024;
@@ -195,9 +183,9 @@ internal static class ServerWebServices
                 var limit = context.RequestServices.GetRequiredService<IOptions<McpalOptions>>().Value.McpRequestsPerMinute;
 
                 // Validated principals only: a request with an unknown token shares its IP's bucket instead of getting its own.
-                var user = context.User;
-                var partition = user.Identity is { IsAuthenticated: true, AuthenticationType: McpBearerDefaults.Scheme }
-                    ? user.GetApiKeyId() is { } apiKeyId ? "key:" + apiKeyId : "company:" + user.GetCompanyId()
+                var principal = context.User;
+                var partition = principal.Identity is { IsAuthenticated: true, AuthenticationType: McpBearerDefaults.Scheme } && principal.GetMcpalUserId() is { } userId
+                    ? "user:" + userId
                     : "ip:" + context.Connection.RemoteIpAddress;
                 return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
                 {

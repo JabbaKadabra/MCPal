@@ -28,39 +28,20 @@ internal sealed class ToolCallAuditTests
         return await McpClient.CreateAsync(transport, cancellationToken: Ct);
     }
 
-    /// <summary>Stores an access token as the OAuth server would after a completed flow, bound to the key.</summary>
-    private static async Task<string> IssueAccessTokenAsync(ServerWebApplicationFactory factory, SeededCompany company, string clientId)
-    {
-        var token = "oauth-test-token-" + Guid.NewGuid().ToString("N");
-        await using var scope = factory.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<MCPalDbContext>();
-        db.OAuthTokens.Add(new OAuthToken
-        {
-            Hash = ApiKeyService.Hash(token),
-            Kind = OAuthTokenKind.Access,
-            CompanyId = company.CompanyId,
-            ApiKeyId = company.ApiKeyId,
-            ClientId = clientId,
-            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-        });
-        await db.SaveChangesAsync(Ct);
-        return token;
-    }
-
     [Test]
     public async Task CallTool_WithApiKey_WritesRowWithKeyBridgeServerAndTool()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
         var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
         row.Outcome.Should().Be("ok");
-        row.AuthKind.Should().Be("apikey");
-        row.ApiKeyId.Should().Be(acme.ApiKeyId);
+        row.AuthKind.Should().Be("pat");
+        row.ApiKeyId.Should().Be(acme.PersonalKeyId);
         row.OAuthClientId.Should().BeNull();
         row.BridgeName.Should().Be("fake");
         row.ServerName.Should().Be("kb");
@@ -72,12 +53,12 @@ internal sealed class ToolCallAuditTests
     }
 
     [Test]
-    public async Task CallTool_WithOAuthToken_WritesRowWithOAuthClientAndKey()
+    public async Task CallTool_WithOAuthToken_WritesRowWithOAuthClientAndNoKey()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        var token = await IssueAccessTokenAsync(factory, acme, "claude-client-1");
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        var token = await factory.IssueAccessTokenAsync(acme.CompanyId, acme.OwnerUserId, "claude-client-1", Ct);
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
         await using var client = await ConnectAsync(factory, token);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
@@ -85,7 +66,7 @@ internal sealed class ToolCallAuditTests
         var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
         row.AuthKind.Should().Be("oauth");
         row.OAuthClientId.Should().Be("claude-client-1");
-        row.ApiKeyId.Should().Be(acme.ApiKeyId);
+        row.ApiKeyId.Should().BeNull();
     }
 
     [Test]
@@ -93,9 +74,9 @@ internal sealed class ToolCallAuditTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"),
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"),
             _ => Task.FromResult(new CallToolResponse(true, "[]", "backend exploded")), Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
@@ -109,12 +90,12 @@ internal sealed class ToolCallAuditTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var bridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
+        await using var bridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "slow"), async _ =>
         {
             await Task.Delay(TimeSpan.FromSeconds(30), Ct);
             return FakeBridge.Text("late");
         }, Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__slow", cancellationToken: Ct);
 
@@ -129,14 +110,14 @@ internal sealed class ToolCallAuditTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync("kb__search", cancellationToken: Ct);
 
         var row = (await AuditTestData.WaitForRowsAsync(factory.Services, acme.CompanyId, 1, Ct)).Single();
         row.Outcome.Should().Be("offline");
         row.PublicName.Should().Be("kb__search");
-        row.ApiKeyId.Should().Be(acme.ApiKeyId);
+        row.ApiKeyId.Should().Be(acme.PersonalKeyId);
     }
 
     [Test]
@@ -145,9 +126,9 @@ internal sealed class ToolCallAuditTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
         var globex = await factory.SeedCompanyAsync("Globex", Ct);
-        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.RawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
-        await using var acmeClient = await ConnectAsync(factory, acme.RawKey);
-        await using var globexClient = await ConnectAsync(factory, globex.RawKey);
+        await using var acmeBridge = await FakeBridge.StartAsync(factory, acme.BridgeKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
+        await using var acmeClient = await ConnectAsync(factory, acme.PersonalKey);
+        await using var globexClient = await ConnectAsync(factory, globex.PersonalKey);
 
         await acmeClient.CallToolAsync("kb__search", cancellationToken: Ct);
         await globexClient.CallToolAsync("kb__search", cancellationToken: Ct);
@@ -161,7 +142,7 @@ internal sealed class ToolCallAuditTests
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct);
         var acme = await factory.SeedCompanyAsync("Acme", Ct);
-        await using var client = await ConnectAsync(factory, acme.RawKey);
+        await using var client = await ConnectAsync(factory, acme.PersonalKey);
 
         await client.CallToolAsync(new string('x', 400), cancellationToken: Ct);
 

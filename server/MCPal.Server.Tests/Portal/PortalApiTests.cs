@@ -129,7 +129,7 @@ internal sealed class PortalApiTests
         using var portal = new PortalClient(factory);
         (await portal.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
 
-        using var created = await portal.PostAsync("/api/portal/keys", new { name = "hq bridge" }, Ct);
+        using var created = await portal.PostAsync("/api/portal/keys", new { name = "hq bridge", purpose = "bridge" }, Ct);
         var key = await PortalClient.JsonAsync(created, Ct);
         var rawKey = key.GetProperty("key").GetString() ?? string.Empty;
         var id = key.GetProperty("id").GetGuid();
@@ -157,7 +157,7 @@ internal sealed class PortalApiTests
         using var globex = new PortalClient(factory);
         (await acme.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
         (await globex.SignupAsync("Globex", "admin@globex.example", Ct)).Dispose();
-        using var created = await acme.PostAsync("/api/portal/keys", new { name = "acme key" }, Ct);
+        using var created = await acme.PostAsync("/api/portal/keys", new { name = "acme key", purpose = "bridge" }, Ct);
         var acmeKey = await PortalClient.JsonAsync(created, Ct);
 
         using var globexList = await globex.GetAsync("/api/portal/keys", Ct);
@@ -187,7 +187,7 @@ internal sealed class PortalApiTests
         using var globex = new PortalClient(factory);
         (await acme.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
         (await globex.SignupAsync("Globex", "admin@globex.example", Ct)).Dispose();
-        using var created = await acme.PostAsync("/api/portal/keys", new { name = "hq" }, Ct);
+        using var created = await acme.PostAsync("/api/portal/keys", new { name = "hq", purpose = "bridge" }, Ct);
         var rawKey = (await PortalClient.JsonAsync(created, Ct)).GetProperty("key").GetString() ?? string.Empty;
         await using var bridge = await FakeBridge.StartAsync(factory, rawKey, FakeBridge.CatalogWith("kb", "search", "get"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
 
@@ -218,7 +218,7 @@ internal sealed class PortalApiTests
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: settings);
         using var portal = new PortalClient(factory);
         (await portal.SignupAsync("Acme", "admin@acme.example", Ct)).Dispose();
-        using var created = await portal.PostAsync("/api/portal/keys", new { name = "hq" }, Ct);
+        using var created = await portal.PostAsync("/api/portal/keys", new { name = "hq", purpose = "bridge" }, Ct);
         var rawKey = (await PortalClient.JsonAsync(created, Ct)).GetProperty("key").GetString() ?? string.Empty;
         await using var bridge = await FakeBridge.StartAsync(factory, rawKey, FakeBridge.CatalogWith("kb", "search"), _ => Task.FromResult(FakeBridge.Text("x")), Ct);
 

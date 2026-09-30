@@ -44,8 +44,8 @@ internal interface IOAuthService
 
     Task<AuthorizeValidation> ValidateAuthorizeAsync(AuthorizeParameters parameters, CancellationToken cancellationToken);
 
-    /// <summary>Creates a single-use code bound to the company (and the API key it authenticated with, if any).</summary>
-    Task<string> IssueCodeAsync(AuthorizeRequest request, Guid companyId, Guid? apiKeyId, CancellationToken cancellationToken);
+    /// <summary>Creates a single-use code bound to the portal user who signed in and authorized the client.</summary>
+    Task<string> IssueCodeAsync(AuthorizeRequest request, Guid companyId, string userId, CancellationToken cancellationToken);
 
     Task<(TokenResponse? Tokens, OAuthError? Error)> ExchangeCodeAsync(
         string? clientId, string? code, string? redirectUri, string? codeVerifier, CancellationToken cancellationToken);
@@ -58,7 +58,6 @@ internal interface IOAuthService
 internal sealed class OAuthService(
     MCPalDbContext db,
     TimeProvider timeProvider,
-    IApiKeyService apiKeys,
     IOptions<McpalOptions> options) : IOAuthService, IAccessTokenValidator
 {
     public const string SupportedScope = "mcp";
@@ -126,9 +125,10 @@ internal sealed class OAuthService(
             new(null, new OAuthError(error, description), redirect, parameters.State);
     }
 
-    public async Task<string> IssueCodeAsync(AuthorizeRequest request, Guid companyId, Guid? apiKeyId, CancellationToken cancellationToken)
+    public async Task<string> IssueCodeAsync(AuthorizeRequest request, Guid companyId, string userId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrEmpty(userId);
 
         var code = NewToken(32);
         db.AuthorizationCodes.Add(new AuthorizationCode
@@ -136,7 +136,7 @@ internal sealed class OAuthService(
             CodeHash = ApiKeyService.Hash(code),
             ClientId = request.Client.ClientId,
             CompanyId = companyId,
-            ApiKeyId = apiKeyId,
+            UserId = userId,
             RedirectUri = request.RedirectUri,
             CodeChallenge = request.CodeChallenge,
             Scope = request.Scope,
@@ -177,12 +177,12 @@ internal sealed class OAuthService(
             return (null, InvalidGrant());
         }
 
-        if (stored.ApiKeyId is { } apiKeyId && !await apiKeys.IsActiveAsync(stored.CompanyId, apiKeyId, cancellationToken))
+        if (!await IsUserActiveAsync(stored.CompanyId, stored.UserId, cancellationToken))
         {
             return (null, InvalidGrant());
         }
 
-        return (await IssueTokensAsync(stored.CompanyId, stored.ApiKeyId, stored.ClientId, stored.Scope, cancellationToken), null);
+        return (await IssueTokensAsync(stored.CompanyId, stored.UserId, stored.ClientId, stored.Scope, cancellationToken), null);
     }
 
     public async Task<(TokenResponse? Tokens, OAuthError? Error)> RefreshAsync(string? clientId, string? refreshToken, CancellationToken cancellationToken)
@@ -209,31 +209,24 @@ internal sealed class OAuthService(
             return (null, InvalidGrant());
         }
 
-        if (stored.ApiKeyId is { } apiKeyId && !await apiKeys.IsActiveAsync(stored.CompanyId, apiKeyId, cancellationToken))
+        if (!await IsUserActiveAsync(stored.CompanyId, stored.UserId, cancellationToken))
         {
             return (null, InvalidGrant());
         }
 
-        return (await IssueTokensAsync(stored.CompanyId, stored.ApiKeyId, stored.ClientId, SupportedScope, cancellationToken), null);
+        return (await IssueTokensAsync(stored.CompanyId, stored.UserId, stored.ClientId, SupportedScope, cancellationToken), null);
     }
 
     public async Task<ValidatedAccessToken?> ValidateAsync(string accessToken, CancellationToken cancellationToken)
     {
         var hash = ApiKeyService.Hash(accessToken);
         var now = timeProvider.GetUtcNow();
-        var activeKeys = db.ApiKeys.Active(db.Companies, now);
-        var token = await db.OAuthTokens.AsNoTracking()
+        var activeUsers = db.Users.Active(db.Companies);
+        return await db.OAuthTokens.AsNoTracking()
             .Where(t => t.Hash == hash && t.Kind == OAuthTokenKind.Access && !t.Revoked && t.ExpiresAt > now)
-            .Where(t => db.Companies.Any(c => c.Id == t.CompanyId && !c.Disabled))
-            .Where(t => t.ApiKeyId == null || activeKeys.Any(k => k.Id == t.ApiKeyId && k.CompanyId == t.CompanyId))
-            .Select(t => new ValidatedAccessToken(
-                t.CompanyId,
-                t.ApiKeyId,
-                t.ClientId,
-                db.ApiKeys.Where(k => k.Id == t.ApiKeyId).Select(k => (ApiKeyPurpose?)k.Purpose).FirstOrDefault(),
-                db.ApiKeys.Where(k => k.Id == t.ApiKeyId).Select(k => k.AllowedServers).FirstOrDefault()))
+            .Where(t => activeUsers.Any(u => u.Id == t.UserId && u.CompanyId == t.CompanyId))
+            .Select(t => new ValidatedAccessToken(t.CompanyId, t.UserId, t.ClientId))
             .FirstOrDefaultAsync(cancellationToken);
-        return token;
     }
 
     public async Task<int> DeleteExpiredAsync(CancellationToken cancellationToken)
@@ -244,7 +237,7 @@ internal sealed class OAuthService(
         return codes + tokens;
     }
 
-    private async Task<TokenResponse> IssueTokensAsync(Guid companyId, Guid? apiKeyId, string clientId, string scope, CancellationToken cancellationToken)
+    private async Task<TokenResponse> IssueTokensAsync(Guid companyId, string userId, string clientId, string scope, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var access = NewToken(32);
@@ -255,7 +248,7 @@ internal sealed class OAuthService(
             Hash = ApiKeyService.Hash(access),
             Kind = OAuthTokenKind.Access,
             CompanyId = companyId,
-            ApiKeyId = apiKeyId,
+            UserId = userId,
             ClientId = clientId,
             ExpiresAt = now.Add(accessLifetime),
         });
@@ -264,13 +257,16 @@ internal sealed class OAuthService(
             Hash = ApiKeyService.Hash(refresh),
             Kind = OAuthTokenKind.Refresh,
             CompanyId = companyId,
-            ApiKeyId = apiKeyId,
+            UserId = userId,
             ClientId = clientId,
             ExpiresAt = now.AddDays(options.Value.RefreshTokenLifetimeDays),
         });
         await db.SaveChangesAsync(cancellationToken);
         return new TokenResponse(access, refresh, (int)accessLifetime.TotalSeconds, scope);
     }
+
+    private async Task<bool> IsUserActiveAsync(Guid companyId, string userId, CancellationToken cancellationToken) =>
+        await db.Users.AsNoTracking().Active(db.Companies).AnyAsync(u => u.Id == userId && u.CompanyId == companyId, cancellationToken);
 
     private static OAuthError InvalidGrant() => new("invalid_grant", "The authorization grant is invalid, expired or already used.");
 

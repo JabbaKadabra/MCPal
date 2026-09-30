@@ -42,7 +42,8 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             key.Property(k => k.Name).HasMaxLength(200);
             key.Property(k => k.Prefix).HasMaxLength(32);
             key.Property(k => k.KeyHash).HasMaxLength(64);
-            key.Property(k => k.AllowedServers).HasColumnType("text[]");
+            key.HasIndex(k => k.UserId);
+            key.HasOne<PortalUser>().WithMany().HasForeignKey(k => k.UserId).OnDelete(DeleteBehavior.Cascade);
             key.HasIndex(k => k.KeyHash).IsUnique();
             key.HasIndex(k => k.CompanyId);
             key.HasOne<Company>().WithMany().HasForeignKey(k => k.CompanyId).OnDelete(DeleteBehavior.Restrict);
@@ -52,6 +53,9 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
         {
             user.HasIndex(u => u.CompanyId);
             user.Property(u => u.Role).HasConversion<string>().HasMaxLength(16);
+            user.Property(u => u.DisplayName).HasMaxLength(200);
+            user.Property(u => u.ExternalIssuer).HasMaxLength(500);
+            user.Property(u => u.ExternalSubject).HasMaxLength(500);
             user.HasOne<Company>().WithMany().HasForeignKey(u => u.CompanyId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -78,6 +82,7 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             code.HasKey(c => c.CodeHash);
             code.Property(c => c.CodeHash).HasMaxLength(64);
             code.HasIndex(c => c.ExpiresAt);
+            code.HasOne<PortalUser>().WithMany().HasForeignKey(c => c.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ToolCallAudit>(audit =>
@@ -101,7 +106,8 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             token.HasKey(t => t.Hash);
             token.Property(t => t.Hash).HasMaxLength(64);
             token.HasIndex(t => t.ExpiresAt);
-            token.HasIndex(t => t.ApiKeyId);
+            token.HasIndex(t => t.UserId);
+            token.HasOne<PortalUser>().WithMany().HasForeignKey(t => t.UserId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
