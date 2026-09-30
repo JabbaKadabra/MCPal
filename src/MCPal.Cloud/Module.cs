@@ -1,5 +1,6 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
+using MCPal.Cloud.Mcp;
 using MCPal.Cloud.Storage;
 using MCPal.Cloud.Tenancy;
 using MCPal.Cloud.Tunnel;
@@ -47,6 +48,8 @@ public sealed class CloudModule(bool registerWebServices = true) : Module
         if (registerWebServices)
         {
             builder.RegisterType<NullAccessTokenValidator>().As<IAccessTokenValidator>().InstancePerLifetimeScope();
+            builder.RegisterType<CallRelay>().AsSelf().InstancePerLifetimeScope();
+            builder.RegisterType<TenantToolHandlers>().AsSelf().InstancePerLifetimeScope();
             builder.RegisterType<HubAgentInvoker>().As<IAgentInvoker>().SingleInstance();
         }
 

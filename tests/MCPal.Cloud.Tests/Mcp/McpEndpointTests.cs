@@ -1,0 +1,184 @@
+using System.Net;
+using System.Net.Http.Headers;
+using MCPal.Cloud.Tests.Infrastructure;
+using MCPal.Contracts;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+
+namespace MCPal.Cloud.Tests.Mcp;
+
+[TestFixture]
+internal sealed class McpEndpointTests
+{
+    private static CancellationToken Ct => TestContext.CurrentContext.CancellationToken;
+
+    private static async Task<McpClient> ConnectAsync(CloudWebApplicationFactory factory, string apiKey)
+    {
+        var httpClient = factory.CreateClient();
+        var transport = new HttpClientTransport(
+            new HttpClientTransportOptions
+            {
+                Endpoint = new Uri(factory.Server.BaseAddress, "mcp"),
+                AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + apiKey },
+            },
+            httpClient,
+            ownsHttpClient: true);
+        return await McpClient.CreateAsync(transport, cancellationToken: Ct);
+    }
+
+    private static string TextOf(CallToolResult result) => result.Content.OfType<TextContentBlock>().Single().Text;
+
+    [Test]
+    public async Task Post_WithoutCredential_Returns401WithChallenge()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        using var client = factory.CreateClient();
+        using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+
+        using var response = await client.PostAsync(new Uri("/mcp", UriKind.Relative), content, Ct);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.Headers.WwwAuthenticate.ToString().Should().Contain("resource_metadata=");
+    }
+
+    [Test]
+    public async Task ListTools_AgentRegistered_ReturnsToolsWithPublicNamesAndServerPrefix()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "search", "get"), _ => Task.FromResult(FakeAgent.Text("x")), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var tools = await client.ListToolsAsync(cancellationToken: Ct);
+
+        tools.Select(t => t.Name).Should().BeEquivalentTo("kb__get", "kb__search");
+        tools.First(t => t.Name == "kb__search").Description.Should().StartWith("[kb] ");
+    }
+
+    [Test]
+    public async Task CallTool_AgentRegistered_RelaysArgumentsAndReturnsAgentResult()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        CallToolRequest? seen = null;
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "search"), request =>
+        {
+            seen = request;
+            return Task.FromResult(FakeAgent.Text("found it"));
+        }, Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("kb__search", new Dictionary<string, object?> { ["text"] = "hello" }, cancellationToken: Ct);
+
+        result.IsError.Should().NotBe(true);
+        TextOf(result).Should().Be("found it");
+        seen.Should().NotBeNull();
+        seen.ServerName.Should().Be("kb");
+        seen.ToolName.Should().Be("search");
+        seen.ArgumentsJson.Should().Contain("hello");
+    }
+
+    [Test]
+    public async Task CallTool_AgentReportsError_ReturnsIsError()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "search"),
+            _ => Task.FromResult(new CallToolResponse(true, "[]", "backend exploded")), Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("kb__search", cancellationToken: Ct);
+
+        result.IsError.Should().BeTrue();
+        TextOf(result).Should().Be("backend exploded");
+    }
+
+    [Test]
+    public async Task CallTool_NoAgentOnline_ReturnsNotAvailableError()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("kb__search", cancellationToken: Ct);
+
+        result.IsError.Should().BeTrue();
+        TextOf(result).Should().Contain("not available");
+    }
+
+    [Test]
+    public async Task CallTool_AgentTooSlow_ReturnsTimeoutError()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:ToolCallTimeoutSeconds"] = "1" });
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        await using var agent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "slow"), async _ =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), Ct);
+            return FakeAgent.Text("late");
+        }, Ct);
+        await using var client = await ConnectAsync(factory, acme.RawKey);
+
+        var result = await client.CallToolAsync("kb__slow", cancellationToken: Ct);
+
+        result.IsError.Should().BeTrue();
+        TextOf(result).Should().Contain("timed out after 1 s");
+    }
+
+    [Test]
+    public async Task ListTools_TwoCompanies_EachSeesOnlyOwnTools()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var globex = await factory.SeedCompanyAsync("Globex", Ct);
+        await using var acmeAgent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "secret"), _ => Task.FromResult(FakeAgent.Text("acme")), Ct);
+        await using var globexAgent = await FakeAgent.StartAsync(factory, globex.RawKey, FakeAgent.CatalogWith("wiki", "read"), _ => Task.FromResult(FakeAgent.Text("globex")), Ct);
+        await using var acmeClient = await ConnectAsync(factory, acme.RawKey);
+        await using var globexClient = await ConnectAsync(factory, globex.RawKey);
+
+        var acmeTools = await acmeClient.ListToolsAsync(cancellationToken: Ct);
+        var globexTools = await globexClient.ListToolsAsync(cancellationToken: Ct);
+
+        acmeTools.Select(t => t.Name).Should().Equal("kb__secret");
+        globexTools.Select(t => t.Name).Should().Equal("wiki__read");
+    }
+
+    [Test]
+    public async Task CallTool_NameOfOtherCompany_ReturnsNotAvailableAndNeverReachesOtherAgent()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct);
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        var globex = await factory.SeedCompanyAsync("Globex", Ct);
+        var reached = false;
+        await using var acmeAgent = await FakeAgent.StartAsync(factory, acme.RawKey, FakeAgent.CatalogWith("kb", "secret"), _ =>
+        {
+            reached = true;
+            return Task.FromResult(FakeAgent.Text("acme data"));
+        }, Ct);
+        await using var globexClient = await ConnectAsync(factory, globex.RawKey);
+
+        var result = await globexClient.CallToolAsync("kb__secret", cancellationToken: Ct);
+
+        result.IsError.Should().BeTrue();
+        reached.Should().BeFalse();
+    }
+
+    [Test]
+    public async Task Post_ExceedingRateLimit_Returns429()
+    {
+        await using var factory = await CloudWebApplicationFactory.CreateAsync(Ct, settings: new() { ["Mcpal:McpRequestsPerMinute"] = "2" });
+        var acme = await factory.SeedCompanyAsync("Acme", Ct);
+        using var client = factory.CreateClient();
+        var statuses = new List<HttpStatusCode>();
+
+        for (var i = 0; i < 4; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", acme.RawKey);
+            using var response = await client.SendAsync(request, Ct);
+            statuses.Add(response.StatusCode);
+        }
+
+        statuses.Should().Contain(HttpStatusCode.TooManyRequests);
+        statuses[0].Should().NotBe(HttpStatusCode.TooManyRequests);
+    }
+}

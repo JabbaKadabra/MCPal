@@ -13,6 +13,6 @@ internal sealed class HubAgentInvoker(IHubContext<AgentHub> hub) : IAgentInvoker
 {
     public async Task<CallToolResponse> CallToolAsync(string connectionId, CallToolRequest request, CancellationToken cancellationToken)
     {
-        return await hub.Clients.Client(connectionId).InvokeAsync<CallToolResponse>(nameof(IAgentHubClient.CallTool), new object[] { request }, cancellationToken);
+        return await hub.Clients.Client(connectionId).InvokeAsync<CallToolResponse>(nameof(IAgentHubClient.CallTool), request, cancellationToken);
     }
 }
