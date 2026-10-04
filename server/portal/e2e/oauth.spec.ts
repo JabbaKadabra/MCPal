@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { password, signUp } from './helpers';
+import { confirmEmail, password, signUp } from './helpers';
 
 const redirect = 'http://localhost:9999/callback';
 
@@ -28,6 +28,7 @@ function authorizeQuery(clientId: string): string {
 
 test('Claude signs in with the portal login and is sent back with a code', async ({ page, browser, request }) => {
   const { email } = await signUp(page);
+  await confirmEmail(page, email);
   const clientId = await registerClient(request);
 
   // A fresh browser context: Claude's user is not signed in to the portal yet.

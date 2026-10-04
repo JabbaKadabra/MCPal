@@ -14,7 +14,7 @@ function LocationProbe() {
 
 function renderLogin(url: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[url]}>
         <Routes>
@@ -24,6 +24,7 @@ function renderLogin(url: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 const me = { email: 'anna@acme.example', companyId: 'c', companyName: 'Acme', role: 'member' };
@@ -61,6 +62,18 @@ describe('LoginPage', () => {
     await signIn();
 
     expect(await screen.findByTestId('location')).toHaveTextContent('/oauth/authorize?client_id=a&state=b');
+  });
+
+  it('forgets the signed-out authorize context so the authorize page asks again', async () => {
+    mockFetch((call) => (call.url === '/api/portal/csrf' ? { body: { token: 't' } } : { body: me }));
+    const returnUrl = encodeURIComponent('/oauth/authorize?client_id=a');
+    const client = renderLogin(`/login?returnUrl=${returnUrl}`);
+    client.setQueryData(['authorize-context', '?client_id=a'], { signedInEmail: null });
+
+    await signIn();
+
+    await screen.findByTestId('location');
+    expect(client.getQueryData(['authorize-context', '?client_id=a'])).toBeUndefined();
   });
 
   it('ignores a return URL that leaves the app', async () => {

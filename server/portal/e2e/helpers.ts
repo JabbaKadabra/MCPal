@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { expect, type Page } from '@playwright/test';
 
 export const password = 'correct-horse-battery';
@@ -26,4 +27,22 @@ export async function createPersonalToken(page: Page, name = unique('key')): Pro
   const key = await page.getByTestId('created-key').innerText();
   expect(key).toMatch(/^mcpal_[0-9a-f]{8}_[A-Za-z0-9]{40}$/);
   return key;
+}
+
+function confirmationLinkFor(email: string): string {
+  const log = execFileSync('docker', ['compose', '--project-directory', '../..', 'logs', '--no-color', 'server'], {
+    encoding: 'utf8',
+  });
+  const mails = log.split('No SMTP host is configured').filter((entry) => entry.includes(`mail to ${email} `));
+  return /https?:\/\/\S*confirm-email\?\S+/.exec(mails.at(-1) ?? '')?.[0] ?? '';
+}
+
+/**
+ * Confirms the email address of a new account; a password login does not work before. The test stack has no SMTP host,
+ * so the server logs the mail with its link, and the link is read from the compose log (`docker compose up`, as in CI).
+ */
+export async function confirmEmail(page: Page, email: string): Promise<void> {
+  await expect.poll(() => confirmationLinkFor(email), { message: `confirmation mail for ${email}`, timeout: 15_000 }).not.toBe('');
+  await page.goto(confirmationLinkFor(email));
+  await expect(page.getByText('Your email address is confirmed.')).toBeVisible();
 }
