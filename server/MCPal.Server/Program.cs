@@ -29,6 +29,7 @@ app.MapHealthChecks("/health", readiness);
 OAuthEndpoints.Map(app);
 JwksEndpoints.Map(app);
 PortalEndpoints.Map(app);
+BridgeEnrollEndpoints.Map(app);
 app.MapHub<BridgeHub>("/hub/bridge");
 app.MapMcp("/mcp")
     .RequireAuthorization(McpBearerDefaults.McpPolicy)

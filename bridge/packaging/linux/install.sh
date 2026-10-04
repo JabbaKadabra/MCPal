@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Installs the MCPal bridge as a systemd service. Run as root from the unpacked release archive:
 #
-#   sudo ./install.sh [--api-key mcpal_...]
+#   sudo ./install.sh [--enroll <code> | --api-key mcpal_...]
+#
+# --enroll trades a one-time code from the portal's Setup page for a bridge key (saved in /etc/mcpal/credentials.json, mode 640).
 #
 # Files: /opt/mcpal/mcpal-bridge (binary), /etc/mcpal/mcpal.json (config, never overwritten), /etc/mcpal/mcp.json (your
 # local MCP servers in the .mcp.json format of Claude Code, never overwritten),
@@ -15,14 +17,21 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="${MCPAL_INSTALL_ROOT:-}"
 skip_service="${MCPAL_SKIP_SERVICE:-0}"
 api_key="${MCPAL_API_KEY:-}"
+enroll_code="${MCPAL_ENROLL:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-key) api_key="${2:?--api-key needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --enroll) enroll_code="${2:?--enroll needs a value}"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ -n "$enroll_code" && -n "$api_key" ]]; then
+  echo "Give --enroll or --api-key, not both." >&2
+  exit 2
+fi
 
 if [[ "$skip_service" != "1" && "$(id -u)" -ne 0 ]]; then
   echo "Run this script as root (sudo ./install.sh)." >&2
@@ -78,9 +87,19 @@ else
   } > "$env_file"
   chmod 600 "$env_file"
   echo "Created $env_file."
-  if [[ -z "$api_key" ]]; then
+  if [[ -z "$api_key" && -z "$enroll_code" ]]; then
     echo "Put the API key of a bridge key into $env_file (MCPAL_API_KEY=mcpal_...)."
   fi
+fi
+
+if [[ -n "$enroll_code" ]]; then
+  echo "Enrolling this bridge ..."
+  if ! "$bin_dir/mcpal-bridge" enroll --config "$config" --code "$enroll_code"; then
+    echo "Enrollment failed, so the bridge has no key. Create a new code on the Setup page and run the script again." >&2
+    exit 1
+  fi
+  # Written as root with mode 600; the service user reads it through the group.
+  chmod 640 "$config_dir/credentials.json"
 fi
 
 if [[ "$skip_service" != "1" ]]; then
@@ -110,3 +129,4 @@ fi
 
 systemctl restart mcpal-bridge.service
 echo "MCPal bridge started. Follow it with: journalctl -u mcpal-bridge -f"
+echo "Your local MCP servers are in $servers; restart the service after changing it. The portal's Setup page shows the bridge as online."

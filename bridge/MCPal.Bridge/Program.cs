@@ -3,6 +3,7 @@ using Autofac.Extensions.DependencyInjection;
 using MCPal.Bridge;
 using MCPal.Bridge.Config;
 using MCPal.Bridge.Diagnostics;
+using MCPal.Bridge.Enrollment;
 using MCPal.Bridge.Local;
 using MCPal.Bridge.Status;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,7 +14,7 @@ using OpenTelemetry.Trace;
 var commandLine = BridgeCommandLine.Parse(args);
 if (!commandLine.IsKnownVerb)
 {
-    Console.Error.WriteLine($"Unknown verb '{commandLine.Verb}'. Usage: MCPal.Bridge [run|check|status] [--config <path>]");
+    Console.Error.WriteLine($"Unknown verb '{commandLine.Verb}'. Usage: MCPal.Bridge [run|check|status|enroll] [--config <path>]");
     return 2;
 }
 
@@ -36,6 +37,20 @@ try
     if (commandLine.Verb == BridgeCommandLine.Status)
     {
         return StatusCommand.Run(BridgeModule.ResolveConfigPath(builder.Configuration), BridgeConfigLoader.CurrentEnvironment(), TimeProvider.System, Console.Out);
+    }
+
+    if (commandLine.Verb is BridgeCommandLine.Enroll or BridgeCommandLine.Run)
+    {
+        var configPath = BridgeModule.ResolveConfigPath(builder.Configuration);
+        var environment = BridgeConfigLoader.CurrentEnvironment();
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var exit = commandLine.Verb == BridgeCommandLine.Enroll
+            ? await EnrollCommand.RunAsync(configPath, builder.Configuration["url"], builder.Configuration["code"], environment, http, Console.Out, Console.Error, CancellationToken.None)
+            : await EnrollCommand.EnrollWhenNeededAsync(configPath, environment, http, Console.Out, Console.Error, CancellationToken.None);
+        if (exit != 0 || commandLine.Verb == BridgeCommandLine.Enroll)
+        {
+            return exit;
+        }
     }
 
     // Fail fast with a clean message before the host starts.

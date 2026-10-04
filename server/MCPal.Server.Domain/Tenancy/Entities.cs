@@ -56,6 +56,31 @@ internal sealed class ApiKey
     public string? CreatedByUserId { get; set; }
 }
 
+/// <summary>
+/// A single-use code with which a bridge fetches its own bridge key. The code is stored hashed and shown once, to the owner who creates it.
+/// </summary>
+internal sealed class BridgeEnrollment
+{
+    public Guid Id { get; set; }
+
+    public Guid CompanyId { get; set; }
+
+    /// <summary>SHA-256 of the code, hex encoded.</summary>
+    public string CodeHash { get; set; } = string.Empty;
+
+    /// <summary>The owner who created the code; the key made on redemption lists this user as its creator.</summary>
+    public string CreatedByUserId { get; set; } = string.Empty;
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    public DateTimeOffset? RedeemedAt { get; set; }
+
+    /// <summary>The bridge key created on redemption.</summary>
+    public Guid? ApiKeyId { get; set; }
+}
+
 /// <summary>Owners manage users, groups, bridge keys and see the audit log; members use their allowed tools, see connections and create personal access tokens for themselves.</summary>
 internal enum PortalRole
 {

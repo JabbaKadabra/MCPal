@@ -49,6 +49,7 @@ public sealed class ApplicationModule(bool forWebHost = true) : Module
 
         builder.RegisterType<AccountMailer>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<TeamService>().AsSelf().InstancePerLifetimeScope();
+        builder.RegisterType<BridgeEnrollmentService>().AsSelf().InstancePerLifetimeScope();
         builder.RegisterType<ConnectionRegistry>().AsSelf().SingleInstance();
         builder.RegisterType<AccessPolicyCache>().AsSelf().SingleInstance();
         builder.RegisterType<AccessPolicyLoader>().AsSelf().InstancePerLifetimeScope();

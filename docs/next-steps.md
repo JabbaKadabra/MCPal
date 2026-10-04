@@ -479,3 +479,12 @@ Pushing a `v1.1.0` tag produces a GitHub release with signed or unsigned archive
 - MCP resources and prompts, CIMD, the Skill→MCP generator: separate specs according to `plan.md`.
 - `tools/list_changed` notifications to Claude: not possible with the stateless MCP transport (`ListChanged = false` in `TenantToolHandlers`). Revisit only if the transport becomes stateful.
 - Billing and platform-admin tooling.
+
+## Easier setup, later slices
+
+Enrollment codes are done (see `docs/superpowers/specs/2026-10-04-easy-setup-design.md`). Ideas that were left out of that slice:
+
+- **`mcp.json` help in the Setup page.** A paste-and-lint box (client-side): each server has `command` or `url` but not both, ignored fields such as `type` are noted, and literal secrets in `env` and `headers` are turned into `${NAME}` references together with a matching list of `-e NAME=…` lines or a `.env` block, so secrets stay out of the file.
+- **Actionable `check` messages.** Name the server, the field and the fix, for example `wiki: command 'npx' not found on PATH` (the Docker image includes Node; on a host install Node), timeouts and HTTP statuses.
+- **Bridge diagnostics in the portal (protocol 1.3).** The bridge reports per-server issues (`BridgeCatalog.ServerIssues`: server name and a short message without secrets) with its registration and refresh; the Connections page and the Setup page's "online" step show them.
+- **Revoking an open enrollment code** from the Setup page.

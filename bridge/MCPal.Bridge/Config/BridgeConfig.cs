@@ -40,4 +40,7 @@ internal sealed record BridgeConfig(McpalConfig Mcpal, IReadOnlyDictionary<strin
     public string? JwksFile { get; init; }
 }
 
+/// <summary>Where <c>enroll</c> sends the code and where it keeps the key.</summary>
+internal sealed record EnrollmentTarget(string? Url, string BridgeName, string CredentialsPath, bool HasKey);
+
 internal sealed class BridgeConfigException(string message) : Exception(message);

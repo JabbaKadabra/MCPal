@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MCPal.Bridge.Enrollment;
 
 namespace MCPal.Bridge.Config;
 
@@ -29,8 +30,43 @@ internal static class BridgeConfigLoader
 
         var raw = ParseRaw(ReadFile(path, "config file"));
         var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
-        return Build(raw, ReadServersFile(raw, directory), environment, requireMcpal);
+        var stored = requireMcpal ? BridgeCredentials.TryRead(CredentialsPath(raw.Mcpal, directory)) : null;
+        return Build(raw, ReadServersFile(raw, directory), environment, requireMcpal, stored);
     }
+
+    /// <summary>
+    /// What <c>enroll</c> needs: the server URL (<paramref name="urlOverride"/>, else <c>mcpal.url</c> with variables expanded; null when neither
+    /// is set), the bridge name, where the key goes and whether the bridge has a key already (environment, config or credentials file).
+    /// </summary>
+    public static EnrollmentTarget LoadEnrollmentTarget(string path, IReadOnlyDictionary<string, string?> environment, string? urlOverride)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var raw = ParseRaw(ReadFile(path, "config file"));
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
+        var mcpal = raw.Mcpal;
+        var credentialsPath = CredentialsPath(mcpal, directory);
+
+        string? url = null;
+        if (!string.IsNullOrWhiteSpace(urlOverride))
+        {
+            url = urlOverride.Trim();
+        }
+        else if (mcpal?.Url is { } rawUrl && !string.IsNullOrWhiteSpace(rawUrl))
+        {
+            url = EnvironmentExpander.Expand(rawUrl, environment, "Config section 'mcpal'");
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(environment.GetValueOrDefault(ApiKeyVariable))
+            || !string.IsNullOrWhiteSpace(mcpal?.ApiKey)
+            || BridgeCredentials.TryRead(credentialsPath) is not null;
+        var name = mcpal?.BridgeName is { } configured && !string.IsNullOrWhiteSpace(configured) ? configured : Environment.MachineName;
+        return new EnrollmentTarget(url, name, credentialsPath, hasKey);
+    }
+
+    private static string CredentialsPath(RawMcpal? mcpal, string directory) =>
+        Path.GetFullPath(string.IsNullOrWhiteSpace(mcpal?.CredentialsFile) ? BridgeCredentials.DefaultFileName : mcpal.CredentialsFile, directory);
 
     private static string ReadFile(string path, string what)
     {
@@ -98,7 +134,7 @@ internal static class BridgeConfigLoader
         ArgumentNullException.ThrowIfNull(json);
         ArgumentNullException.ThrowIfNull(environment);
 
-        return Build(ParseRaw(json), null, environment, requireMcpal);
+        return Build(ParseRaw(json), null, environment, requireMcpal, storedApiKey: null);
     }
 
     private static RawConfig ParseRaw(string json)
@@ -113,9 +149,9 @@ internal static class BridgeConfigLoader
         }
     }
 
-    private static BridgeConfig Build(RawConfig raw, ServersFile? serversFile, IReadOnlyDictionary<string, string?> environment, bool requireMcpal)
+    private static BridgeConfig Build(RawConfig raw, ServersFile? serversFile, IReadOnlyDictionary<string, string?> environment, bool requireMcpal, string? storedApiKey)
     {
-        var mcpal = ParseMcpal(raw.Mcpal, environment, requireMcpal);
+        var mcpal = ParseMcpal(raw.Mcpal, environment, requireMcpal, storedApiKey);
         var rawServers = MergeServers(raw, serversFile);
         var servers = new Dictionary<string, LocalServerConfig>(StringComparer.Ordinal);
         foreach (var (name, server) in rawServers)
@@ -167,13 +203,19 @@ internal static class BridgeConfigLoader
         return merged;
     }
 
-    private static McpalConfig ParseMcpal(RawMcpal? raw, IReadOnlyDictionary<string, string?> environment, bool required)
+    private static McpalConfig ParseMcpal(RawMcpal? raw, IReadOnlyDictionary<string, string?> environment, bool required, string? storedApiKey)
     {
+        // Keys from the environment and the credentials file are literal: only the key written in mcpal.json may refer to ${VARIABLES}.
         var apiKey = environment.GetValueOrDefault(ApiKeyVariable);
-        var apiKeyFromEnvironment = !string.IsNullOrWhiteSpace(apiKey);
-        if (!apiKeyFromEnvironment)
+        var keyIsLiteral = !string.IsNullOrWhiteSpace(apiKey);
+        if (!keyIsLiteral)
         {
             apiKey = raw?.ApiKey;
+            if (string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(storedApiKey))
+            {
+                apiKey = storedApiKey;
+                keyIsLiteral = true;
+            }
         }
 
         var url = raw?.Url;
@@ -181,7 +223,7 @@ internal static class BridgeConfigLoader
         {
             const string context = "Config section 'mcpal'";
             url = url is null ? null : EnvironmentExpander.Expand(url, environment, context);
-            apiKey = apiKey is null || apiKeyFromEnvironment
+            apiKey = apiKey is null || keyIsLiteral
                 ? apiKey
                 : EnvironmentExpander.Expand(apiKey, environment, context);
             if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
@@ -191,7 +233,7 @@ internal static class BridgeConfigLoader
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                throw new BridgeConfigException($"Config section 'mcpal' needs 'apiKey' (or set {ApiKeyVariable}).");
+                throw new BridgeConfigException($"Config section 'mcpal' needs 'apiKey' (or set {ApiKeyVariable}, or enroll this bridge with {BridgeEnroller.CodeVariable}; see the Setup page of the portal).");
             }
         }
 
@@ -333,6 +375,9 @@ internal static class BridgeConfigLoader
 
         /// <summary>File with the local servers in the Claude Code <c>.mcp.json</c> shape; relative to the config. Default: <c>mcp.json</c> next to it, if present.</summary>
         public string? McpServersFile { get; set; }
+
+        /// <summary>File that holds the key the bridge got by enrolling; relative to the config. Default: <c>credentials.json</c> next to it.</summary>
+        public string? CredentialsFile { get; set; }
     }
 
     private sealed class RawServerOptions

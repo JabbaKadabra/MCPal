@@ -1,7 +1,8 @@
 {
   "mcpal": {
     "url": "${MCPAL_URL}",
-    "mcpServersFile": "/config/mcp.json"
+    "mcpServersFile": "/config/mcp.json",
+    "credentialsFile": "/data/credentials.json"
   },
   "statusFile": "/data/status.json",
   "jwksFile": "/data/jwks.json"

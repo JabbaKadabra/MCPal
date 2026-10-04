@@ -1,4 +1,4 @@
-import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Setup, Team, TeamMember, Group, Grant, UserAccess } from './types';
+import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Enrollment, Me, Role, Setup, Team, TeamMember, Group, Grant, UserAccess } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -139,6 +139,7 @@ export const api = {
   connections: () => request<Connection[]>('GET', '/api/portal/connections'),
   connectInfo: () => request<ConnectInfo>('GET', '/api/portal/connect-info'),
   setup: () => request<Setup>('GET', '/api/portal/setup'),
+  createEnrollment: () => request<Enrollment>('POST', '/api/portal/setup/enrollments'),
   audit: (filters: AuditFilters, cursor?: string) => request<AuditPage>('GET', `/api/portal/audit${auditQuery(filters, cursor)}`),
   authorizeContext: (search: string) => request<AuthorizeContext>('GET', `/api/oauth/authorize/context${search}`),
   authorize: (body: Record<string, unknown>) => request<{ redirectUrl: string }>('POST', '/api/oauth/authorize', body),

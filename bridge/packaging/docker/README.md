@@ -5,12 +5,14 @@ The default way to run the bridge. The image `ghcr.io/jabbakadabra/mcpal-bridge`
 ```bash
 docker run -d --name mcpal-bridge --hostname mcpal-bridge --restart unless-stopped \
   -e MCPAL_URL=https://mcpal.example.com \
-  -e MCPAL_API_KEY=mcpal_... \
+  -e MCPAL_ENROLL=mcpale_... \
   -v "$PWD/mcp.json:/config/mcp.json:ro" \
   -v mcpal-bridge-data:/data \
   ghcr.io/jabbakadabra/mcpal-bridge:latest
 docker logs -f mcpal-bridge
 ```
+
+The enrollment code comes from the portal's Setup page. It works once and lasts 15 minutes; the bridge fetches its own bridge key and keeps it in `/data/credentials.json`, so keep the volume. A restart ignores the (spent) code. A bridge key you created yourself works too: pass `-e MCPAL_API_KEY=mcpal_...` instead.
 
 Or use [`compose.yml`](compose.yml) in this folder.
 
@@ -19,7 +21,9 @@ Or use [`compose.yml`](compose.yml) in this folder.
 | What | Where |
 |---|---|
 | Server URL | `MCPAL_URL` (required) |
-| Bridge key | `MCPAL_API_KEY` (required) |
+| Enrollment code | `MCPAL_ENROLL`: the one-time code from the Setup page (the bridge enrolls itself on the first start) |
+| Bridge key | `MCPAL_API_KEY`: a bridge key you created yourself, instead of the code (one of the two is required) |
+| Key saved by enrollment | `/data/credentials.json` (mode 600) |
 | Local MCP servers | `/config/mcp.json`, mounted read-only (required; `.mcp.json` format of Claude Code) |
 | JWKS copy, status file, tool caches (`HOME`) | `/data`, a volume; the container runs as a non-root user |
 | Secrets for `mcp.json` | more `-e NAME=...`; refer to them as `${NAME}` in `mcp.json` |
