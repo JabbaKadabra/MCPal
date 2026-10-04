@@ -1,4 +1,4 @@
-import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Team, TeamMember, Group, Grant, UserAccess } from './types';
+import type { ApiKey, AuditFilters, Invitation, InvitationPreview, NewApiKey, AuditPage, AuthorizeContext, ConnectInfo, Connection, CreatedApiKey, Me, Role, Setup, Team, TeamMember, Group, Grant, UserAccess } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -138,6 +138,7 @@ export const api = {
   revokeKey: (id: string) => request<void>('DELETE', `/api/portal/keys/${id}`),
   connections: () => request<Connection[]>('GET', '/api/portal/connections'),
   connectInfo: () => request<ConnectInfo>('GET', '/api/portal/connect-info'),
+  setup: () => request<Setup>('GET', '/api/portal/setup'),
   audit: (filters: AuditFilters, cursor?: string) => request<AuditPage>('GET', `/api/portal/audit${auditQuery(filters, cursor)}`),
   authorizeContext: (search: string) => request<AuthorizeContext>('GET', `/api/oauth/authorize/context${search}`),
   authorize: (body: Record<string, unknown>) => request<{ redirectUrl: string }>('POST', '/api/oauth/authorize', body),

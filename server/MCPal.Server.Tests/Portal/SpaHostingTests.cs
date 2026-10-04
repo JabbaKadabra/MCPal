@@ -19,6 +19,7 @@ internal sealed class SpaHostingTests
 
     [TestCase("/")]
     [TestCase("/keys")]
+    [TestCase("/setup")]
     [TestCase("/connections")]
     [TestCase("/audit")]
     [TestCase("/forgot-password")]

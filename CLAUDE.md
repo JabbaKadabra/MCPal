@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCPal is a reverse-tunnel MCP relay. A bridge inside a company network opens an outbound SignalR connection to the server. The server exposes one public MCP endpoint (`/mcp`) to claude.ai / Claude Code and relays tool calls through the tunnel to the bridge, which calls local MCP servers (stdio or HTTP). Each company (tenant) sees only its own tools; tenant isolation is a hard requirement.
 
-`plan.md` holds the design decisions, conventions and a "Status and handoff" section (what is done, deviations from the plan, what is next). Read it before larger changes. `docs/tunnel-protocol.md` and `docs/oauth.md` describe the wire protocol and auth flows.
+`plan.md` holds the design decisions, conventions and a "Status and handoff" section (what is done, deviations from the plan, what is next). Read it before larger changes. `docs/tunnel-protocol.md` and `docs/oauth.md` describe the wire protocol and auth flows. `docs/access-control.md` covers groups, grants and the caller token, `docs/next-steps.md` the post-MVP backlog, `docs/superpowers/specs/` the design specs (onion rings). `CHANGELOG.md` (Unreleased) carries upgrade notes: add an entry for every breaking change.
 
 ## Commands
 
@@ -18,10 +18,12 @@ dotnet test MCPal.slnx                         # needs Docker; DB tests go incon
 dotnet build server/MCPal.Server.slnf          # one artifact only (also bridge/MCPal.Bridge.slnf); open these in the IDE
 dotnet test server/MCPal.Server.Tests --filter "FullyQualifiedName~ToolNamingTests" # single class/test
 dotnet run --project server/MCPal.Server       # http://localhost:8080, needs PostgreSQL (see appsettings)
+./dev.sh                                       # hot reload for server + SPA: PostgreSQL (:5433), dotnet watch, Vite; open http://localhost:5173
 docker compose up --build                      # server + PostgreSQL on :8080
 ./bridge/packaging/publish-bridge.sh [--version X.Y.Z] [rid] # single-file bridge (linux-x64, linux-arm64, win-x64) into artifacts/bridge
 ./bridge/packaging/package-bridge.sh X.Y.Z linux-x64 # release archive with install script into artifacts/release
 bridge/packaging/linux/test-install.sh         # tests install.sh without root or systemd
+bridge/packaging/docker/test-image.sh          # builds bridge/Dockerfile (the default bridge install) and runs `check` in it
 
 # EF Core migrations (live in server/MCPal.Server.Storage/Migrations; design-time factory pins PostgreSQL)
 dotnet ef migrations add <Name> --project server/MCPal.Server.Storage --output-dir Migrations
@@ -35,7 +37,7 @@ npm run dev                                    # :5173, proxies /api, /mcp, /hub
 npm run build                                  # writes the SPA into server/MCPal.Server/wwwroot
 ```
 
-CI (`.github/workflows/ci.yml`) runs a Release build + `dotnet test`, `npm run typecheck` + `npm test` for the SPA, and a Playwright job against the compose stack. `.github/workflows/release.yml` builds and publishes a release for a `vX.Y.Z` tag (bridge archives, checksums, GHCR image).
+CI (`.github/workflows/ci.yml`) runs a Release build + `dotnet test`, `npm run typecheck` + `npm test` for the SPA, and a Playwright job against the compose stack. `.github/workflows/release.yml` builds and publishes a release for a `vX.Y.Z` tag (bridge image and archives, checksums, server image on GHCR).
 
 Pitfalls seen in this repo:
 - Run the whole `dotnet test MCPal.slnx` after touching a ring module (`ApplicationModule`, `StorageModule`, `InfrastructureModule`, `WebModule`), `ServerModule`, `ServerWebServices` or `Program.cs`: a registration mistake there breaks every `ServerWebApplicationFactory` test (for example `services.AddOpenTelemetry()` in the module's own `ServiceCollection` registers a fallback `IConfiguration`; `ServerWebServices` removes it).
@@ -47,7 +49,7 @@ Pitfalls seen in this repo:
 
 ## Architecture
 
-The repo is grouped by what ships. `server/` is the container image (the onion rings `MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web`, the ASP.NET host `MCPal.Server`, their tests, and the `portal/` SPA that is built into the host's `wwwroot`). `bridge/` is the on-prem binary (`MCPal.Bridge`, its tests, `packaging/` with publish scripts and installers). `shared/MCPal.Contracts` is the tunnel protocol both sides compile against. `tests/` holds only cross-artifact tests. One `MCPal.slnx` holds everything, because Contracts changes and the E2E tests must build both sides together. Use the `.slnf` filters for a single artifact.
+The repo is grouped by what ships. `server/` is the container image (the onion rings `MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web`, the ASP.NET host `MCPal.Server`, their tests, and the `portal/` SPA that is built into the host's `wwwroot`). `bridge/` is the on-prem binary (`MCPal.Bridge`, its tests, `Dockerfile` (the default install: container image with Node and uv), `packaging/` with publish scripts, installers and the docker contract/compose example). `shared/MCPal.Contracts` is the tunnel protocol both sides compile against. `tests/` holds only cross-artifact tests. One `MCPal.slnx` holds everything, because Contracts changes and the E2E tests must build both sides together. Use the `.slnf` filters for a single artifact.
 
 Naming: the **server** is MCPal's own cloud service and the **bridge** is the process inside the company network. The MCP servers the bridge talks to are **local MCP servers**. In prose, say "MCPal server" wherever "server" alone could mean a local MCP server.
 
@@ -70,7 +72,7 @@ Projects:
     - `Portal/`: JSON API for the SPA, ASP.NET Identity cookie auth, antiforgery header `X-CSRF-TOKEN`. `ActiveUserFilter` (401 for a disabled user or company, checked in the database on every call) and `OwnerOnlyFilter` guard the endpoint groups; `TeamService` owns invitations, disabling, enabling and removing users (revokes tokens, protects the last active owner, invalidates the access policy cache).
     - `Storage/`: `MCPalDbContext`, migrations, `DatabaseMigrator` (runs at startup when `Mcpal:MigrateOnStartup`); all in `MCPal.Server.Storage`.
     - `Program.cs` maps everything. The SPA fallback regex must never capture `api`, `mcp`, `health`, `hub`, `.well-known`, `oauth/token`, `oauth/register`. Health endpoints: `/health/live`, `/health/ready` (DB check), `/health` (= ready).
-- `bridge/MCPal.Bridge`: generic host with verbs `run` (tunnel), `check` (start local servers, list tools, exit) and `status` (print the `statusFile` a running bridge writes for monitoring). `LocalServerManager` owns MCP client connections to local servers; `TunnelClient` handles connect/reconnect with backoff and re-`Register` on reconnect, `tools/list_changed` and a 30 s refresh. Config is `mcpal.json` (`mcpal` + a Claude-style `mcpServers` block); API key (a bridge key) from `MCPAL_API_KEY` or `mcpal.apiKey`. Per server `userContext` (default true) and `userTokenHeader` (HTTP), top-level `jwksFile`: `UserContextMeta` puts the caller into `_meta["eu.nordstein.mcp/user"]` (and strips a spoofed key), `UserTokenHeaderHandler` + `UserTokenScope` (AsyncLocal, set only around `SendRequestAsync`, after `GetClientAsync`) add the header to tool calls only, `JwksFileWriter` keeps the JWKS copy. Runs as Windows service or systemd unit.
+- `bridge/MCPal.Bridge`: generic host with verbs `run` (tunnel), `check` (start local servers, list tools, exit) and `status` (print the `statusFile` a running bridge writes for monitoring). `LocalServerManager` owns MCP client connections to local servers; `TunnelClient` handles connect/reconnect with backoff and re-`Register` on reconnect, `tools/list_changed` and a 30 s refresh. Config is `mcpal.json` (`mcpal`, `serverOptions` for MCPal-only per-server settings) plus the local servers in `mcp.json` next to it (Claude Code `.mcp.json` shape, or `mcpal.mcpServersFile`; an inline `mcpServers` block still works, a name must be in one place only); API key (a bridge key) from `MCPAL_API_KEY` or `mcpal.apiKey`. Per server `userContext` (default true) and `userTokenHeader` (HTTP), top-level `jwksFile`: `UserContextMeta` puts the caller into `_meta["eu.nordstein.mcp/user"]` (and strips a spoofed key), `UserTokenHeaderHandler` + `UserTokenScope` (AsyncLocal, set only around `SendRequestAsync`, after `GetClientAsync`) add the header to tool calls only, `JwksFileWriter` keeps the JWKS copy. Runs as Windows service or systemd unit.
 - `server/portal`: React + TypeScript + Vite SPA (portal and the OAuth sign-in page), TanStack Query, strings via typed `t()` in `src/i18n`.
 
 Timeouts are layered: bridge per-call limit 110 s (`callTimeoutSeconds`) sits just below the server's 120 s (`Mcpal:ToolCallTimeoutSeconds`). Keep that ordering.

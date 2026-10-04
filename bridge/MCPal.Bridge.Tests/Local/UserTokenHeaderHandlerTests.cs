@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using MCPal.Bridge.Local;
 
@@ -8,11 +9,12 @@ internal sealed class UserTokenHeaderHandlerTests
 {
     private sealed class Recorder : HttpMessageHandler
     {
-        public List<HttpRequestMessage> Requests { get; } = [];
+        /// <summary>Concurrent: the parallel-scopes test sends from two threads, and a <see cref="List{T}"/> loses adds under that.</summary>
+        public ConcurrentQueue<HttpRequestMessage> Requests { get; } = new();
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Requests.Add(request);
+            Requests.Enqueue(request);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
     }

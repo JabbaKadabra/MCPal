@@ -26,7 +26,7 @@ else
   cp bridge/packaging/linux/install.sh bridge/packaging/linux/uninstall.sh bridge/packaging/linux/mcpal-bridge.service "$stage/"
   chmod 755 "$stage/install.sh" "$stage/uninstall.sh"
 fi
-cp bridge/MCPal.Bridge/mcpal.example.json "$stage/"
+cp bridge/MCPal.Bridge/mcpal.example.json bridge/MCPal.Bridge/mcp.example.json "$stage/"
 sed "s/@VERSION@/$version/g; s/@RID@/$rid/g" "bridge/packaging/README.$([[ "$rid" == win-* ]] && echo windows || echo linux).txt" > "$stage/README.txt"
 
 rm -f "$out/$name.tar.gz" "$out/$name.zip"

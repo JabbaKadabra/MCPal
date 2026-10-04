@@ -8,7 +8,7 @@ export function unique(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Creates a company and its owner through the sign-up page and lands on the API keys page. */
+/** Creates a company and its owner through the sign-up page (it lands on the setup walkthrough) and opens the API keys page. */
 export async function signUp(page: Page, company = unique('Acme')): Promise<{ company: string; email: string }> {
   const email = `${unique('owner')}@example.test`;
   await page.goto('/signup');
@@ -16,6 +16,8 @@ export async function signUp(page: Page, company = unique('Acme')): Promise<{ co
   await page.getByLabel('Work email').fill(email);
   await page.getByLabel('Password (at least 10 characters)').fill(password);
   await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByRole('heading', { name: 'Set up your bridge' })).toBeVisible();
+  await page.getByRole('link', { name: 'API keys' }).click();
   await expect(page.getByRole('heading', { name: 'API keys' })).toBeVisible();
   return { company, email };
 }

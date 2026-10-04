@@ -30,13 +30,29 @@ Everyone may use every tool at first. To restrict, open **Groups**: remove or na
 
 ### 3. Start the bridge inside your network
 
-Download the bridge for your platform from the [releases](https://github.com/JabbaKadabra/MCPal/releases) page (`mcpal-bridge-<version>-linux-x64.tar.gz`, `linux-arm64`, or `win-x64.zip`; check the archive against `sha256sums.txt`) and install it as a service with the script inside:
+The portal guides you: after sign-up it opens **Setup** (also in the menu). It creates the bridge key, shows the `docker run` command with your server URL and key filled in (or the install commands of a release archive), offers a sample `mcp.json` and tells you when the bridge is online. Your local MCP servers go into `mcp.json`: copy your existing Claude Code `.mcp.json`. The manual steps below do the same.
+
+**Docker (the default).** The image `ghcr.io/jabbakadabra/mcpal-bridge` (linux/amd64 and linux/arm64) holds the bridge plus Node (`npx`) and uv (`uvx`), so common stdio MCP servers work as they are:
+
+```bash
+docker run -d --name mcpal-bridge --hostname mcpal-bridge --restart unless-stopped \
+  -e MCPAL_URL=https://mcpal.example.com \
+  -e MCPAL_API_KEY=mcpal_… \
+  -v "$PWD/mcp.json:/config/mcp.json:ro" \
+  -v mcpal-bridge-data:/data \
+  ghcr.io/jabbakadabra/mcpal-bridge:latest
+```
+
+`MCPAL_URL`, `MCPAL_API_KEY` and `/config/mcp.json` are required; `/data` keeps the status file and tool caches. A compose file, the full contract (volumes, health check, reaching servers on the host, other runtimes) and how to build the image are in [`bridge/packaging/docker/`](bridge/packaging/docker/README.md).
+
+**Service without Docker.** Download the archive for your platform from the [releases](https://github.com/JabbaKadabra/MCPal/releases) page (`mcpal-bridge-<version>-linux-x64.tar.gz`, `linux-arm64`, or `win-x64.zip`; check the archive against `sha256sums.txt`) and install it as a service with the script inside:
 
 ```bash
 # Linux (systemd)
 tar -xzf mcpal-bridge-<version>-linux-x64.tar.gz && cd mcpal-bridge-<version>-linux-x64
 sudo ./install.sh --api-key mcpal_…       # a bridge key; creates user mcpal, /opt/mcpal, /etc/mcpal, the unit
-sudo nano /etc/mcpal/mcpal.json           # then: sudo systemctl restart mcpal-bridge
+sudo nano /etc/mcpal/mcpal.json           # the MCPal server URL
+sudo nano /etc/mcpal/mcp.json             # your local MCP servers, then: sudo systemctl restart mcpal-bridge
 ```
 
 ```powershell
@@ -45,21 +61,42 @@ Expand-Archive mcpal-bridge-<version>-win-x64.zip . ; cd mcpal-bridge-<version>-
 .\install.ps1 -ApiKey mcpal_…             # service MCPalBridge, C:\Program Files\MCPal, config in C:\ProgramData\MCPal
 ```
 
-Both scripts keep an existing `mcpal.json`, protect the configuration (mode 640 and `bridge.env` 600 on Linux; an ACL for Administrators, SYSTEM and the service account on Windows), enable restart on failure and start the service only when `mcpal-bridge check` passes. `uninstall.sh` / `uninstall.ps1` remove it. The Linux unit runs with `ProtectSystem=strict` and `ProtectHome=yes`; a local server that needs other paths gets them through `systemctl edit mcpal-bridge` (see the comments in the unit). The Windows binary is unsigned unless the release says otherwise, so SmartScreen may warn.
+Both scripts keep an existing `mcpal.json` and `mcp.json`. On a first install they create both from examples; the `mcp.json` example is one `everything` server reduced to its `echo` tool (needs `npx`), so `mcpal-bridge check` passes and a tool shows up before you add your own servers. Both scripts protect the configuration (mode 640 and `bridge.env` 600 on Linux; an ACL for Administrators, SYSTEM and the service account on Windows), enable restart on failure and start the service only when `mcpal-bridge check` passes. `uninstall.sh` / `uninstall.ps1` remove it. The Linux unit runs with `ProtectSystem=strict` and `ProtectHome=yes`; a local server that needs other paths gets them through `systemctl edit mcpal-bridge` (see the comments in the unit). The Windows binary is unsigned unless the release says otherwise, so SmartScreen may warn.
 
-To build the bridge yourself: `./bridge/packaging/publish-bridge.sh --version 1.1.0 linux-x64` (also `linux-arm64`, `win-x64`; without arguments all three) writes `artifacts/bridge/<rid>`, and `./bridge/packaging/package-bridge.sh 1.1.0 linux-x64` packs the release archive.
+To build the bridge yourself: `docker build -f bridge/Dockerfile -t mcpal-bridge .` for the image, `./bridge/packaging/publish-bridge.sh --version 1.1.0 linux-x64` (also `linux-arm64`, `win-x64`; without arguments all three) writes `artifacts/bridge/<rid>`, and `./bridge/packaging/package-bridge.sh 1.1.0 linux-x64` packs the release archive.
 
-Or run the binary directly. `mcpal.json` sits next to it (or is given with `--config`); copy your existing `mcpServers` block as it is:
+Or run the binary directly. Two files sit next to it (or are given with `--config`):
+
+`mcpal.json` holds the MCPal side:
+
+```json
+{ "mcpal": { "url": "https://mcpal.example.com", "bridgeName": "hq-01" } }
+```
+
+`mcp.json` holds your local MCP servers in the format of Claude Code's `.mcp.json`, so you can copy your existing file as it is (other fields such as `"type"` are ignored):
 
 ```json
 {
-  "mcpal": { "url": "https://mcpal.example.com", "bridgeName": "hq-01" },
   "mcpServers": {
     "kb":   { "command": "npx", "args": ["-y", "@acme/kb-mcp"], "env": { "KB_TOKEN": "…" } },
     "wiki": { "url": "http://intranet:8080/mcp", "headers": { "Authorization": "Bearer …" } }
   }
 }
 ```
+
+`mcp.json` is read when it exists next to `mcpal.json`; `"mcpal": { "mcpServersFile": "path/to/servers.json" }` names another file (relative to `mcpal.json`; it must exist). A `mcpServers` block inside `mcpal.json` still works; a server name must be in only one of the two. Settings that only MCPal knows (`includeTools`, `excludeTools`, `userContext`, `userTokenHeader`) do not exist in other tools' formats, so keep them out of the copied file and set them per server in `mcpal.json`:
+
+```json
+{
+  "mcpal": { "url": "https://mcpal.example.com" },
+  "serverOptions": {
+    "wiki": { "userTokenHeader": "Authorization" },
+    "postgres": { "includeTools": ["query", "list_*"], "excludeTools": ["drop_*"] }
+  }
+}
+```
+
+A `serverOptions` name that matches no server is an error (it catches typos). The same fields still work inside a server entry; `serverOptions` wins when both set one.
 
 Local servers learn who is calling: the bridge puts the caller (a signed token plus claims) into `_meta["eu.nordstein.mcp/user"]` of every tool call. `"userTokenHeader": "Authorization"` on an HTTP server also sends the token in that header (with tool calls only), `"userContext": false` keeps a server from seeing callers, and `"jwksFile": "/etc/mcpal/jwks.json"` makes the bridge keep a copy of the server's public keys for servers without internet access. Servers must verify the token and refuse calls without a caller; see [docs/access-control.md](docs/access-control.md).
 
@@ -71,7 +108,7 @@ export MCPAL_API_KEY=mcpal_…          # or set mcpal.apiKey in the file
 
 Values in `command`, `args`, `env`, `url`, `headers` and in `mcpal.url` / `mcpal.apiKey` can refer to environment variables, so secrets stay out of the file: `"Authorization": "Bearer ${WIKI_TOKEN}"`, or with a default `"${WIKI_HOST:-intranet}"`. Write `$$` for a literal `$`. A variable that is not set and has no default stops the bridge (and `check`) with a message that names the server and the variable.
 
-To expose only part of a local server, add `includeTools` and/or `excludeTools` to it. Patterns are case-sensitive globs (`*`, `?`). A tool must match an include pattern (when the list is set) and no exclude pattern: `"postgres": { "command": "…", "includeTools": ["query", "list_*"], "excludeTools": ["drop_*"] }`. Hidden tools do not reach the server and the bridge refuses calls to them; `check` lists them as "hidden by config".
+To expose only part of a local server, set `includeTools` and/or `excludeTools` for it (see `serverOptions` above). Patterns are case-sensitive globs (`*`, `?`). A tool must match an include pattern (when the list is set) and no exclude pattern: `"includeTools": ["query", "list_*"], "excludeTools": ["drop_*"]`. Hidden tools do not reach the server and the bridge refuses calls to them; `check` lists them as "hidden by config".
 
 For monitoring (Zabbix, Nagios, SCOM), set `"statusFile": "/var/lib/mcpal/status.json"` in `mcpal.json`. The bridge writes its tunnel state, registered servers with tool counts and rejections there on every change and every 30 s, replacing the file atomically. `./MCPal.Bridge status --config mcpal.json` prints it and exits with 1 when the tunnel is not connected or the file is older than two minutes.
 
@@ -113,6 +150,16 @@ Grouped by what ships: `server/` becomes the container image, `bridge/` the bina
 
 Requirements: .NET 10 SDK, Docker (Testcontainers and compose), Node.js 24+ (SPA).
 
+Portal and server with hot reload, one command:
+
+```bash
+./dev.sh    # PostgreSQL in Docker (port 5433), dotnet watch for the server, Vite for the SPA; open http://localhost:5173
+```
+
+UI edits reload in the browser, C# edits restart the server. Ctrl-C stops the server and Vite; the database container keeps running (`docker compose -p mcpal-dev down -v` removes it with its data). The dev database is separate from the one of `docker compose up`, and `Mcpal__PublicUrl` is the Vite URL, so links in mails and OAuth point at the portal you work in. Data Protection keys are kept in `.dev/keys`.
+
+Single steps:
+
 ```bash
 dotnet build MCPal.slnx                   # zero warnings expected (warnings are errors)
 dotnet test MCPal.slnx                    # needs Docker; DB tests are marked inconclusive without it
@@ -136,7 +183,9 @@ Configuration (environment variables use `__` for `:`):
 | `Mcpal__AccessTokenLifetimeMinutes` / `RefreshTokenLifetimeDays` | 60 / 30 | OAuth token lifetimes |
 | `Mcpal__McpRequestsPerMinute` | 600 | Rate limit on `/mcp` per user (all their tokens share it); requests without a valid credential share a limit per client IP |
 | `Mcpal__AuditRetentionDays` / `AuditQueueCapacity` | 90 / 10000 | How long audit rows are kept; entries the audit writer holds in memory before it drops new ones |
-| `Mcpal__LatestBridgeVersion` | – | Version of the newest bridge release; older bridges get an "update available" hint in the portal |
+| `Mcpal__LatestBridgeVersion` | – | Version of the newest bridge release; older bridges get an "update available" hint in the portal and the Setup page links the archives of this version |
+| `Mcpal__BridgeReleaseBaseUrl` | `https://github.com/JabbaKadabra/MCPal/releases` | Releases page the Setup page links to (archives at `<url>/download/v<version>/…`); change it for a fork or a mirror |
+| `Mcpal__BridgeImage` | `ghcr.io/jabbakadabra/mcpal-bridge` | Container image (without tag) the Setup page tells owners to run; the tag is `Mcpal__LatestBridgeVersion`, or `latest`; change it for a fork or a mirror |
 | `Mcpal__MigrateOnStartup` | true | Apply EF Core migrations at startup |
 | `Mcpal__TrustedProxyNetworks__0`, `__1`, … | – | CIDR networks of reverse proxies whose `X-Forwarded-For`/`X-Forwarded-Proto` are trusted (loopback always is), e.g. `172.18.0.0/16` |
 

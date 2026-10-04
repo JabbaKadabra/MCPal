@@ -975,3 +975,28 @@ td.num {
   margin: 1.25rem 0 0.5rem;
   font-size: 1rem;
 }
+
+/* Setup walkthrough: step headings and bodies inside the numbered steps. */
+
+.steps > li > h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.step-body {
+  font-weight: 400;
+}
+
+.step-body textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+}
+
+.choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  border: 0;
+}

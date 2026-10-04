@@ -92,6 +92,7 @@ internal static class PortalEndpoints
         secured.MapDelete("keys/{id:guid}", RevokeKeyAsync);
         secured.MapGet("connections", ConnectionsAsync);
         secured.MapGet("connect-info", ConnectInfo);
+        SetupEndpoints.Map(secured);
         AuditEndpoints.Map(secured);
     }
 

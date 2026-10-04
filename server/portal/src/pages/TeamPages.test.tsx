@@ -183,7 +183,7 @@ describe('team pages', () => {
     const page = (
       <>
         <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
-        <Route path="/keys" element={<p>keys page</p>} />
+        <Route path="/" element={<p>landing page</p>} />
       </>
     );
 
@@ -204,7 +204,7 @@ describe('team pages', () => {
       await user.type(screen.getByLabelText('Repeat the password'), 'a-long-password-1');
       await user.click(screen.getByRole('button', { name: 'Join' }));
 
-      expect(await screen.findByText('keys page')).toBeInTheDocument();
+      expect(await screen.findByText('landing page')).toBeInTheDocument();
       expect(calls.find((c) => c.url === '/api/portal/invitations/preview?token=tok-123')).toBeDefined();
       expect(calls.find((c) => c.url === '/api/portal/invitations/accept')?.body).toEqual({ token: 'tok-123', password: 'a-long-password-1' });
     });
@@ -250,6 +250,18 @@ describe('team pages', () => {
       renderLayout(owner);
 
       expect(await screen.findByRole('link', { name: 'Users' })).toBeInTheDocument();
+    });
+
+    it('shows the setup page to owners', async () => {
+      renderLayout(owner);
+      expect(await screen.findByRole('link', { name: 'Setup' })).toHaveAttribute('href', '/setup');
+    });
+
+    it('hides the setup page from members', async () => {
+      renderLayout({ ...owner, role: 'member' });
+
+      await screen.findByText('Acme');
+      expect(screen.queryByRole('link', { name: 'Setup' })).not.toBeInTheDocument();
     });
 
     it('hides the users page from members', async () => {

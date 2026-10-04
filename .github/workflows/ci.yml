@@ -71,6 +71,16 @@ jobs:
       - name: Test
         run: npm test
 
+  bridge-image:
+    name: Bridge image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the image and start the sample local server in it
+        run: bridge/packaging/docker/test-image.sh
+
   e2e:
     name: Browser smoke tests (Playwright)
     runs-on: ubuntu-latest

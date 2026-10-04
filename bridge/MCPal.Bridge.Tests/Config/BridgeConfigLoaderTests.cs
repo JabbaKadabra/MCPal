@@ -33,6 +33,26 @@ internal sealed class BridgeConfigLoaderTests
         config.McpServers["wiki"].Headers["Authorization"].Should().Be("Bearer x");
     }
 
+    /// <summary>The file the portal setup walkthrough hands out (server <c>SetupEndpoints.ConfigJson</c>): URL only, the key comes from the environment.</summary>
+    [Test]
+    public void Parse_SetupWalkthroughConfig_WorksWithKeyFromEnvironment()
+    {
+        const string fromPortal = """
+            {
+              "mcpal": {
+                "url": "https://mcpal.example.com"
+              }
+            }
+            """;
+        var environment = new Dictionary<string, string?> { ["MCPAL_API_KEY"] = "mcpal_cccccccc_fromenv" };
+
+        var config = BridgeConfigLoader.Parse(fromPortal, environment, requireMcpal: true);
+
+        config.Mcpal.Url.Should().Be("https://mcpal.example.com");
+        config.Mcpal.ApiKey.Should().Be("mcpal_cccccccc_fromenv");
+        config.McpServers.Should().BeEmpty();
+    }
+
     [Test]
     public void Parse_EnvironmentApiKey_OverridesConfiguredKey()
     {

@@ -6,14 +6,21 @@ The bridge runs inside your network and opens an outbound connection to the MCPa
 Install (as a systemd service):
 
     sudo ./install.sh --api-key mcpal_...     # use a bridge key from the portal (API keys > used by: a bridge)
-    sudo nano /etc/mcpal/mcpal.json           # MCPal server URL and your mcpServers, then: sudo systemctl restart mcpal-bridge
+    sudo nano /etc/mcpal/mcpal.json           # the MCPal server URL
+    sudo nano /etc/mcpal/mcp.json             # your local MCP servers (see below), then: sudo systemctl restart mcpal-bridge
 
-The script creates the user "mcpal", installs the binary to /opt/mcpal, keeps an existing /etc/mcpal/mcpal.json, writes
-secrets to /etc/mcpal/bridge.env (mode 600), and starts the service only when "mcpal-bridge check" passes.
+The script creates the user "mcpal", installs the binary to /opt/mcpal, keeps an existing /etc/mcpal/mcpal.json and
+/etc/mcpal/mcp.json, writes secrets to /etc/mcpal/bridge.env (mode 600), and starts the service only when "mcpal-bridge
+check" passes.
+
+Your local MCP servers go into mcp.json next to mcpal.json, in the format of Claude Code's .mcp.json: copy your existing
+file (a "mcpServers" block with "command"/"args"/"env" or "url"/"headers" per server). MCPal-only settings per server
+(includeTools, excludeTools, userContext, userTokenHeader) go into "serverOptions" in mcpal.json. "mcpal.mcpServersFile"
+names another file. Servers can also stay inline in mcpal.json ("mcpServers"); a name must be in only one place.
 
 Try it without a service:
 
-    ./mcpal-bridge check --config mcpal.json    # start the local servers and list their tools
+    ./mcpal-bridge check --config mcpal.json    # start the local servers (mcp.json next to it) and list their tools
     MCPAL_API_KEY=mcpal_... ./mcpal-bridge run --config mcpal.json
 
 Secrets: mcpal.json may refer to environment variables as ${NAME}; put them into /etc/mcpal/bridge.env.

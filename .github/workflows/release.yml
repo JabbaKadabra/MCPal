@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag vX.Y.Z to release: the bridge for Linux and Windows (archives with install scripts), sha256sums.txt,
-# a GitHub release, and the server image on GHCR. The tag is the version.
+# Push a tag vX.Y.Z to release: the bridge as a container image (the default install) and as archives for Linux and Windows
+# (with install scripts), sha256sums.txt, a GitHub release, and the server image on GHCR. The tag is the version.
 # Run it by hand (workflow_dispatch) with dry_run to build everything without creating the release or pushing the image.
 
 on:
@@ -133,6 +133,39 @@ jobs:
             --title "MCPal $VERSION" \
             --generate-notes \
             $([[ "$VERSION" == *-* ]] && echo --prerelease)
+
+  bridge-image:
+    name: Bridge image
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # arm64 is built by emulation, but only the small runtime stage runs under it (the .NET build is cross-platform).
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: needs.version.outputs.dry_run != 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: names
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mcpal-bridge" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: bridge/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ needs.version.outputs.version }}
+          push: ${{ needs.version.outputs.dry_run != 'true' }}
+          tags: |
+            ${{ steps.names.outputs.image }}:${{ needs.version.outputs.version }}
+            ${{ steps.names.outputs.image }}:latest
 
   image:
     name: Server image

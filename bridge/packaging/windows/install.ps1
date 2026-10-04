@@ -6,7 +6,8 @@ Installs the MCPal bridge as a Windows service. Run from the unpacked release ar
 .\install.ps1 -ApiKey mcpal_xxxxxxxx_...
 
 .DESCRIPTION
-Files: <InstallDir>\mcpal-bridge.exe (binary), <DataDir>\mcpal.json (config, never overwritten). The config can hold secrets,
+Files: <InstallDir>\mcpal-bridge.exe (binary), <DataDir>\mcpal.json (config, never overwritten), <DataDir>\mcp.json (your local
+MCP servers in the .mcp.json format of Claude Code, never overwritten). The files can hold secrets,
 so <DataDir> is readable only by Administrators, SYSTEM and the service account. The API key is stored in the service's
 environment (registry key of the service, Administrators only). The service starts only when "mcpal-bridge check" passes.
 #>
@@ -28,7 +29,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-foreach ($file in 'mcpal-bridge.exe', 'mcpal.example.json') {
+foreach ($file in 'mcpal-bridge.exe', 'mcpal.example.json', 'mcp.example.json') {
     if (-not (Test-Path (Join-Path $here $file))) {
         throw "Missing $file next to the install script. Run it from the unpacked archive."
     }
@@ -36,6 +37,7 @@ foreach ($file in 'mcpal-bridge.exe', 'mcpal.example.json') {
 
 $exe = Join-Path $InstallDir 'mcpal-bridge.exe'
 $config = Join-Path $DataDir 'mcpal.json'
+$servers = Join-Path $DataDir 'mcp.json'
 
 # Stop a running bridge first, so the binary can be replaced.
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -52,10 +54,17 @@ if (Test-Path $config) {
     Write-Host "Kept the existing $config."
 } else {
     Copy-Item (Join-Path $here 'mcpal.example.json') $config
-    Write-Host "Created $config from the example. Edit it: MCPal server URL and your mcpServers."
+    Write-Host "Created $config from the example. Edit it: the MCPal server URL."
 }
 
-# The config may contain secrets: only Administrators, SYSTEM and the service account may read the data directory.
+if (Test-Path $servers) {
+    Write-Host "Kept the existing $servers."
+} else {
+    Copy-Item (Join-Path $here 'mcp.example.json') $servers
+    Write-Host "Created $servers from the example. Replace it with your own MCP config (the mcpServers block, as in Claude Code's .mcp.json)."
+}
+
+# The config files may contain secrets: only Administrators, SYSTEM and the service account may read the data directory.
 $grants = @('*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
 if ($ServiceAccount -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
     $grants += "${ServiceAccount}:(OI)(CI)RX"
