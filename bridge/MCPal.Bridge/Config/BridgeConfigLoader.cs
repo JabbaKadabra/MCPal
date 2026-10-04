@@ -233,7 +233,7 @@ internal static class BridgeConfigLoader
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                throw new BridgeConfigException($"Config section 'mcpal' needs 'apiKey' (or set {ApiKeyVariable}, or enroll this bridge with MCPAL_ENROLL; see the Setup page of the portal).");
+                throw new BridgeConfigException($"Config section 'mcpal' needs 'apiKey' (or set {ApiKeyVariable}, or enroll this bridge with {BridgeEnroller.CodeVariable}; see the Setup page of the portal).");
             }
         }
 

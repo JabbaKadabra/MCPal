@@ -47,4 +47,14 @@ internal sealed class BridgeCommandLineTests
         parsed.Verb.Should().Be("status");
         parsed.IsKnownVerb.Should().BeTrue();
     }
+
+    [Test]
+    public void Parse_EnrollVerb_IsKnownAndKeepsItsOptions()
+    {
+        var parsed = BridgeCommandLine.Parse(["enroll", "--url", "https://mcpal.example.com", "--code", "mcpale_x"]);
+
+        parsed.IsKnownVerb.Should().BeTrue();
+        parsed.Verb.Should().Be("enroll");
+        parsed.HostArgs.Should().Equal("--url", "https://mcpal.example.com", "--code", "mcpale_x");
+    }
 }
