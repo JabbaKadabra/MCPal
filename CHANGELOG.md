@@ -9,6 +9,9 @@
 - `Mcpal:DataProtectionPath` is now required in Production (it protects the signing keys of the caller tokens).
 - The audit log page and export are for owners only.
 
+### Changed
+- Internal: the server is split into onion rings (`MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web` and the host `MCPal.Server`). No change to endpoints, protocol or database schema. EF migrations now live in `server/MCPal.Server.Storage/Migrations`.
+
 ### Added
 - **Access control**: groups with grants (server glob plus tool globs), evaluated live per request. The built-in *Everyone* group (granted `* / *` for new and existing companies) keeps everything working until an owner narrows it; owners may use every tool. Forbidden tools are missing from `tools/list` and answer like unknown tools. Portal pages **Groups** (owners) and **My access**; users can be disabled and enabled, and the Users page shows groups and effective access.
 - **Caller identity for local MCP servers**: every tool call carries the user as a short-lived ES256 token (verifiable with `/.well-known/jwks.json`, keys rotate automatically) plus plain claims, in `_meta["eu.nordstein.mcp/user"]` and optionally in an HTTP header (`userTokenHeader`). Tunnel protocol 1.2. Bridge settings `userContext`, `userTokenHeader` and `jwksFile`. See `docs/access-control.md`.

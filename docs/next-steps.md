@@ -17,7 +17,7 @@ Read `CLAUDE.md`, `plan.md` (sections "Security / tenant isolation rules" and "S
 - Package versions only in `Directory.Packages.props`.
 - New options go into `McpalOptions` with data annotations (validated on start).
 - Tunnel protocol changes: keep them backward compatible where possible (new optional DTO fields at the end of the record, with defaults). Bump `ProtocolVersion.Current` minor for additive changes, major only for breaking changes. Update `docs/tunnel-protocol.md` in the same pull request.
-- New EF migrations: `dotnet ef migrations add <Name> --project server/MCPal.Server --output-dir Storage/Migrations`.
+- New EF migrations: `dotnet ef migrations add <Name> --project server/MCPal.Server.Storage --output-dir Migrations`.
 - Add a line to `CHANGELOG.md` and update "Status and handoff" in `plan.md` when an item is done.
 
 ## Recommended order
