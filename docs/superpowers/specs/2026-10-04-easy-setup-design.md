@@ -1,6 +1,6 @@
 # Easier bridge setup: enrollment codes
 
-Date: 2026-10-04. Status: draft, waiting for review.
+Date: 2026-10-04. Status: implemented 2026-10-04.
 
 ## Goal
 
@@ -60,7 +60,7 @@ Tenant isolation: the code is bound to one company at creation. Redemption creat
 
 ### Bridge
 
-- Credentials file `credentials.json` holds `{ "apiKey": "mcpal_…" }`, written with mode 600 (Linux, Docker) or an ACL for Administrators, SYSTEM and the service account (Windows, same helper idea as `install.ps1`). Location: `mcpal.credentialsFile` (relative to `mcpal.json`), default `credentials.json` next to `mcpal.json`; `mcpal.docker.json` sets `/data/credentials.json`.
+- Credentials file `credentials.json` holds `{ "apiKey": "mcpal_…" }`, written with mode 600 (Linux, Docker) or the ACL of the data directory that `install.ps1` sets (Windows; new files inherit it). Location: `mcpal.credentialsFile` (relative to `mcpal.json`), default `credentials.json` next to `mcpal.json`; `mcpal.docker.json` sets `/data/credentials.json`.
 - Key precedence in `BridgeConfigLoader`: `MCPAL_API_KEY`, then `mcpal.apiKey`, then the credentials file. A missing key is still a configuration error, with an updated message that names `MCPAL_ENROLL`.
 - Verb `enroll`: `mcpal-bridge enroll --url <server> --code <code> [--config path]`. Posts to `/api/bridge/enroll` with `bridgeName` (config `mcpal.bridgeName`, else the host name), writes the credentials file, prints the result and exits 0. On `invalid_code` it prints "The enrollment code is invalid, expired or already used. Create a new one on the Setup page." and exits 1. The URL comes from `--url` or `mcpal.url`/`MCPAL_URL`. The code comes from `--code` or `MCPAL_ENROLL`.
 - Auto-enroll on `run`: when no key is found and `MCPAL_ENROLL` is set, the bridge enrolls first, saves the credentials file and continues. When a key exists, `MCPAL_ENROLL` is ignored (the code was used already; a restarted container must not fail). If the volume with the credentials file is lost, the code is spent and the bridge stops with the message above.
@@ -88,7 +88,7 @@ Tenant isolation: the code is bound to one company at creation. Redemption creat
 
 ## Error handling
 
-- Server: all redemption failures return the same `invalid_code`; details only in server logs (counted in a `ServerTelemetry` counter by outcome: `redeemed`, `rejected`).
+- Server: all redemption failures return the same `invalid_code`; details only in the server log (information level).
 - Too many open codes: `409` from the create endpoint with a message the SPA shows.
 - Bridge: network or TLS errors during enrollment exit 1 with the underlying message and the URL used. A credentials file that is unreadable or invalid JSON is a configuration error naming the path.
 

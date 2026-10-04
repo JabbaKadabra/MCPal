@@ -45,6 +45,12 @@ The bridge hands it to the local MCP server in the `tools/call` request, `params
 
 The bridge can keep a copy of the JWKS for local servers without internet access: top-level `jwksFile` in `mcpal.json` (fetched at startup and hourly, replaced atomically).
 
+## Enrollment (outside the tunnel)
+
+A bridge can get its bridge key by trading a one-time enrollment code instead of being given a key. This is plain HTTPS before the tunnel exists; the tunnel protocol and its version do not change.
+
+`POST /api/bridge/enroll` (anonymous, rate limited per IP): request `{ "code": "mcpale_…", "bridgeName": "hq-01" }`. Answers: `200 { "url": "<public url>", "apiKey": "mcpal_…" }`, `400 { "error": "invalid_code" }` (unknown, used, expired, or its creator or company is no longer active; the caller cannot tell which), `429`. An owner creates the code on the Setup page (`POST /api/portal/setup/enrollments`). A code works once, lasts `Mcpal:EnrollmentLifetimeMinutes` (default 15), is stored only as a hash and belongs to the company of the owner who created it. The key it yields is an ordinary bridge key named "Bridge `<bridgeName>`": it shows on the API keys page and revoking it closes the tunnel.
+
 ## Versions
 
 | Version | Change |

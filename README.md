@@ -22,9 +22,9 @@ docker compose up --build        # server on http://localhost:8080 + PostgreSQL
 
 For real use, put it behind TLS and set `Mcpal__PublicUrl` in `docker-compose.yml` to the public HTTPS URL (Claude only connects to public HTTPS servers, and the OAuth metadata is built from this URL).
 
-### 2. Create your company and an API key
+### 2. Create your company
 
-Open the server URL, choose **Create account** (you become the company's owner), then **API keys → Create key** with type **Bridge key**. The full key is shown once. A bridge key belongs to the company and only opens the tunnel: it is refused on `/mcp`, so a copy taken from a server is useless for calling tools. Colleagues get an account through **Users → Invite**; they sign in to Claude with it. Claude itself needs no key: it signs in with the MCPal account (OAuth). A **personal access token** (type "Personal access token") acts as its owner and is for tools that cannot do OAuth, e.g. Claude Code with a header.
+Open the server URL, choose **Create account** (you become the company's owner), then open **Setup**. The bridge needs no key from you: Setup creates a one-time enrollment code, and the bridge trades it for its own bridge key. Create a **Bridge key** by hand under **API keys** only when you want one key for several bridges (the full key is shown once). A bridge key belongs to the company and only opens the tunnel: it is refused on `/mcp`, so a copy taken from a server is useless for calling tools. Colleagues get an account through **Users → Invite**; they sign in to Claude with it. Claude itself needs no key: it signs in with the MCPal account (OAuth). A **personal access token** (type "Personal access token") acts as its owner and is for tools that cannot do OAuth, e.g. Claude Code with a header.
 
 Everyone may use every tool at first. To restrict, open **Groups**: remove or narrow the grant of the built-in *Everyone* group and give groups their own grants (server and tool patterns). Owners may always use everything.
 
@@ -37,20 +37,20 @@ The portal guides you: after sign-up it opens **Setup** (also in the menu). It c
 ```bash
 docker run -d --name mcpal-bridge --hostname mcpal-bridge --restart unless-stopped \
   -e MCPAL_URL=https://mcpal.example.com \
-  -e MCPAL_API_KEY=mcpal_… \
+  -e MCPAL_ENROLL=mcpale_… \
   -v "$PWD/mcp.json:/config/mcp.json:ro" \
   -v mcpal-bridge-data:/data \
   ghcr.io/jabbakadabra/mcpal-bridge:latest
 ```
 
-`MCPAL_URL`, `MCPAL_API_KEY` and `/config/mcp.json` are required; `/data` keeps the status file and tool caches. A compose file, the full contract (volumes, health check, reaching servers on the host, other runtimes) and how to build the image are in [`bridge/packaging/docker/`](bridge/packaging/docker/README.md).
+`MCPAL_URL`, `MCPAL_ENROLL` (or `MCPAL_API_KEY`) and `/config/mcp.json` are required; `/data` keeps the status file, tool caches and the key the bridge got by enrolling (`/data/credentials.json`: keep the volume). The enrollment code works once and lasts 15 minutes (`Mcpal__EnrollmentLifetimeMinutes`); a restart ignores it. A bridge key you created yourself works too: use `-e MCPAL_API_KEY=mcpal_…` instead. A compose file, the full contract (volumes, health check, reaching servers on the host, other runtimes) and how to build the image are in [`bridge/packaging/docker/`](bridge/packaging/docker/README.md).
 
 **Service without Docker.** Download the archive for your platform from the [releases](https://github.com/JabbaKadabra/MCPal/releases) page (`mcpal-bridge-<version>-linux-x64.tar.gz`, `linux-arm64`, or `win-x64.zip`; check the archive against `sha256sums.txt`) and install it as a service with the script inside:
 
 ```bash
 # Linux (systemd)
 tar -xzf mcpal-bridge-<version>-linux-x64.tar.gz && cd mcpal-bridge-<version>-linux-x64
-sudo ./install.sh --api-key mcpal_…       # a bridge key; creates user mcpal, /opt/mcpal, /etc/mcpal, the unit
+sudo ./install.sh --enroll mcpale_…       # the code from the Setup page (or --api-key mcpal_… with a bridge key); creates user mcpal, /opt/mcpal, /etc/mcpal, the unit
 sudo nano /etc/mcpal/mcpal.json           # the MCPal server URL
 sudo nano /etc/mcpal/mcp.json             # your local MCP servers, then: sudo systemctl restart mcpal-bridge
 ```
@@ -58,12 +58,21 @@ sudo nano /etc/mcpal/mcp.json             # your local MCP servers, then: sudo s
 ```powershell
 # Windows (elevated PowerShell)
 Expand-Archive mcpal-bridge-<version>-win-x64.zip . ; cd mcpal-bridge-<version>-win-x64
-.\install.ps1 -ApiKey mcpal_…             # service MCPalBridge, C:\Program Files\MCPal, config in C:\ProgramData\MCPal
+.\install.ps1 -Enroll mcpale_…             # or -ApiKey mcpal_…; service MCPalBridge, C:\Program Files\MCPal, config in C:\ProgramData\MCPal
 ```
 
 Both scripts keep an existing `mcpal.json` and `mcp.json`. On a first install they create both from examples; the `mcp.json` example is one `everything` server reduced to its `echo` tool (needs `npx`), so `mcpal-bridge check` passes and a tool shows up before you add your own servers. Both scripts protect the configuration (mode 640 and `bridge.env` 600 on Linux; an ACL for Administrators, SYSTEM and the service account on Windows), enable restart on failure and start the service only when `mcpal-bridge check` passes. `uninstall.sh` / `uninstall.ps1` remove it. The Linux unit runs with `ProtectSystem=strict` and `ProtectHome=yes`; a local server that needs other paths gets them through `systemctl edit mcpal-bridge` (see the comments in the unit). The Windows binary is unsigned unless the release says otherwise, so SmartScreen may warn.
 
 To build the bridge yourself: `docker build -f bridge/Dockerfile -t mcpal-bridge .` for the image, `./bridge/packaging/publish-bridge.sh --version 1.1.0 linux-x64` (also `linux-arm64`, `win-x64`; without arguments all three) writes `artifacts/bridge/<rid>`, and `./bridge/packaging/package-bridge.sh 1.1.0 linux-x64` packs the release archive.
+
+#### Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| The portal never shows the bridge online | no outbound HTTPS to the MCPal server, or a wrong `MCPAL_URL` | `docker logs mcpal-bridge` (or `journalctl -u mcpal-bridge`); open the server URL from that machine |
+| `The enrollment code is invalid, expired or already used` | a code works once and lasts 15 minutes | create a new code on the Setup page |
+| A container stops and asks for a key after it was recreated | the data volume (`/data`) was lost after the code was spent | create a new code and start again, or pass `MCPAL_API_KEY` |
+| `check` says a server `FAILED to start` | the command or URL of the local MCP server in `mcp.json` is wrong | read the log line above it; run the server command by hand |
 
 Or run the binary directly. Two files sit next to it (or are given with `--config`):
 
@@ -101,10 +110,13 @@ A `serverOptions` name that matches no server is an error (it catches typos). Th
 Local servers learn who is calling: the bridge puts the caller (a signed token plus claims) into `_meta["eu.nordstein.mcp/user"]` of every tool call. `"userTokenHeader": "Authorization"` on an HTTP server also sends the token in that header (with tool calls only), `"userContext": false` keeps a server from seeing callers, and `"jwksFile": "/etc/mcpal/jwks.json"` makes the bridge keep a copy of the server's public keys for servers without internet access. Servers must verify the token and refuse calls without a caller; see [docs/access-control.md](docs/access-control.md).
 
 ```bash
-export MCPAL_API_KEY=mcpal_…          # or set mcpal.apiKey in the file
+./MCPal.Bridge enroll --config mcpal.json --url https://mcpal.example.com --code mcpale_…   # once: saves credentials.json next to mcpal.json
+# or: export MCPAL_API_KEY=mcpal_…  (or set mcpal.apiKey in the file)
 ./MCPal.Bridge check --config mcpal.json   # validate the config, start the servers, list their tools
 ./MCPal.Bridge run   --config mcpal.json   # connect to the server (also runs as a Windows service / systemd unit)
 ```
+
+The bridge key comes from `MCPAL_API_KEY`, else `mcpal.apiKey`, else the credentials file written by `enroll` (`mcpal.credentialsFile`, relative to `mcpal.json`, default `credentials.json` next to it). `run` with `MCPAL_ENROLL` set and no key enrolls first; with a key it ignores the variable.
 
 Values in `command`, `args`, `env`, `url`, `headers` and in `mcpal.url` / `mcpal.apiKey` can refer to environment variables, so secrets stay out of the file: `"Authorization": "Bearer ${WIKI_TOKEN}"`, or with a default `"${WIKI_HOST:-intranet}"`. Write `$$` for a literal `$`. A variable that is not set and has no default stops the bridge (and `check`) with a message that names the server and the variable.
 

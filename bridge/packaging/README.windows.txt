@@ -5,12 +5,13 @@ The bridge runs inside your network and opens an outbound connection to the MCPa
 
 Install (as a Windows service), in an elevated PowerShell:
 
-    .\install.ps1 -ApiKey mcpal_...          # use a bridge key from the portal (API keys > used by: a bridge)
+    .\install.ps1 -Enroll mcpale_...          # the one-time code from the portal's Setup page
+    # or: .\install.ps1 -ApiKey mcpal_...     # a bridge key you created in the portal (API keys)
     notepad C:\ProgramData\MCPal\mcpal.json   # the MCPal server URL
     notepad C:\ProgramData\MCPal\mcp.json     # your local MCP servers (see below), then: Restart-Service MCPalBridge
 
 The script copies the binary to C:\Program Files\MCPal, keeps an existing C:\ProgramData\MCPal\mcpal.json and mcp.json,
-restricts that directory to Administrators, SYSTEM and the service account (the config can hold secrets), registers the
+restricts that directory to Administrators, SYSTEM and the service account (the config can hold secrets; the key of -Enroll is saved there as credentials.json), registers the
 service with restart-on-failure, and starts it only when "mcpal-bridge check" passes.
 
 Your local MCP servers go into mcp.json next to mcpal.json, in the format of Claude Code's .mcp.json: copy your existing

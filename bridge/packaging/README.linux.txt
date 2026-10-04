@@ -5,12 +5,13 @@ The bridge runs inside your network and opens an outbound connection to the MCPa
 
 Install (as a systemd service):
 
-    sudo ./install.sh --api-key mcpal_...     # use a bridge key from the portal (API keys > used by: a bridge)
+    sudo ./install.sh --enroll mcpale_...     # the one-time code from the portal's Setup page
+    # or: sudo ./install.sh --api-key mcpal_...   # a bridge key you created in the portal (API keys)
     sudo nano /etc/mcpal/mcpal.json           # the MCPal server URL
     sudo nano /etc/mcpal/mcp.json             # your local MCP servers (see below), then: sudo systemctl restart mcpal-bridge
 
 The script creates the user "mcpal", installs the binary to /opt/mcpal, keeps an existing /etc/mcpal/mcpal.json and
-/etc/mcpal/mcp.json, writes secrets to /etc/mcpal/bridge.env (mode 600), and starts the service only when "mcpal-bridge
+/etc/mcpal/mcp.json, writes secrets to /etc/mcpal/bridge.env (mode 600; the key of --enroll goes to /etc/mcpal/credentials.json, mode 640), and starts the service only when "mcpal-bridge
 check" passes.
 
 Your local MCP servers go into mcp.json next to mcpal.json, in the format of Claude Code's .mcp.json: copy your existing
