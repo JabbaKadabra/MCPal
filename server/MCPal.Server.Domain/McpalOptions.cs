@@ -44,6 +44,13 @@ public sealed class McpalOptions : IValidatableObject
     [Url]
     public string BridgeReleaseBaseUrl { get; set; } = "https://github.com/JabbaKadabra/MCPal/releases";
 
+    /// <summary>
+    /// Container image of the bridge the setup walkthrough tells owners to run, without tag. The tag is <see cref="LatestBridgeVersion"/>
+    /// (or <c>latest</c> when that is empty). Change it for a fork or a mirror.
+    /// </summary>
+    [Required]
+    public string BridgeImage { get; set; } = "ghcr.io/jabbakadabra/mcpal-bridge";
+
     /// <summary>The signed caller token that local MCP servers receive with every tool call.</summary>
     public UserContextOptions UserContext { get; set; } = new();
 

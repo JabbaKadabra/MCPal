@@ -110,6 +110,8 @@ export interface Setup {
   downloads: BridgeDownload[];
   releasesUrl: string;
   checksumsUrl: string | null;
+  /** The bridge container image with tag: the newest version, or `latest` when the server does not know it. */
+  imageReference: string;
   /** The pre-filled bridge config: server URL, no key, no servers. */
   configJson: string;
   /** A first mcp.json: an echo server for owners who have no MCP config yet. */

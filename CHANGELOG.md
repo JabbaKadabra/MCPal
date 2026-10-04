@@ -10,6 +10,7 @@
 - The audit log page and export are for owners only.
 
 ### Changed
+- **The bridge is installed as a Docker container by default.** New image `ghcr.io/<owner>/mcpal-bridge` (linux/amd64 and linux/arm64, tags `<version>` and `latest`, built by the release workflow and checked in CI), with Node and uv for stdio MCP servers. It is configured by `MCPAL_URL`, `MCPAL_API_KEY` and a mounted `/config/mcp.json`; see `bridge/packaging/docker/`. The Setup page offers Docker first (`GET /api/portal/setup` has the new field `imageReference`); the Linux and Windows archives with install scripts are still released and offered as alternatives. New option `Mcpal__BridgeImage` (image without tag, for forks and mirrors). Not breaking: existing archive installs keep working.
 - After signing in, owners of a company that never had a bridge connected land on the new **Setup** walkthrough (`/setup`) instead of the API keys page. Everyone else, and owners once a bridge has connected, land on the API keys page as before.
 - Internal: the server is split into onion rings (`MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web` and the host `MCPal.Server`). No change to endpoints, protocol or database schema. EF migrations now live in `server/MCPal.Server.Storage/Migrations`.
 

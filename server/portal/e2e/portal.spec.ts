@@ -57,6 +57,8 @@ test('a new owner lands on the setup walkthrough and gets a pre-filled mcpal.jso
   await page.getByRole('button', { name: 'Create bridge key' }).click();
   const key = await page.getByTestId('created-key').innerText();
   expect(key).toMatch(/^mcpal_[0-9a-f]{8}_[A-Za-z0-9]{40}$/);
+  await expect(page.getByText(`-e MCPAL_API_KEY=${key} `)).toBeVisible();
+  await page.getByRole('radio', { name: 'Linux x64' }).check();
   await expect(page.getByText(`sudo ./install.sh --api-key ${key}`)).toBeVisible();
 
   const href = (await page.getByRole('link', { name: 'Download mcpal.json' }).getAttribute('href')) ?? '';

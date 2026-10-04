@@ -21,6 +21,7 @@ const setup: Setup = {
   ],
   releasesUrl: `${releases}/tag/v1.2.3`,
   checksumsUrl: `${releases}/download/v1.2.3/sha256sums.txt`,
+  imageReference: 'ghcr.io/o/mcpal-bridge:1.2.3',
   configJson: JSON.stringify({ mcpal: { url: 'https://mcpal.example.com' } }),
   sampleMcpJson: JSON.stringify({ mcpServers: { everything: { command: 'npx', includeTools: ['echo'] } } }),
   hasConnectedBridge: false,
@@ -51,6 +52,10 @@ function backend(options: { setup?: Setup; connections?: Connection[] } = {}) {
   };
 }
 
+async function chooseLinux() {
+  await userEvent.click(await screen.findByRole('radio', { name: 'Linux x64' }));
+}
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -74,6 +79,7 @@ describe('SetupPage', () => {
   it('links the archive of the chosen platform and the checksums', async () => {
     mockFetch(backend());
     renderPage();
+    await chooseLinux();
 
     expect(await screen.findByRole('link', { name: /mcpal-bridge-1\.2\.3-linux-x64\.tar\.gz/ })).toHaveAttribute('href', setup.downloads[0]?.url);
     await userEvent.click(screen.getByRole('radio', { name: 'Windows x64' }));
@@ -84,6 +90,7 @@ describe('SetupPage', () => {
   it('points to the latest release page when the version is unknown', async () => {
     mockFetch(backend({ setup: { ...setup, bridgeVersion: null, downloads: [], checksumsUrl: null, releasesUrl: `${releases}/latest` } }));
     renderPage();
+    await chooseLinux();
 
     expect(await screen.findByRole('link', { name: 'Releases page' })).toHaveAttribute('href', `${releases}/latest`);
     expect(screen.queryByRole('link', { name: /mcpal-bridge-/ })).not.toBeInTheDocument();
@@ -92,6 +99,7 @@ describe('SetupPage', () => {
   it('creates a bridge key, shows it once and puts it into the install command', async () => {
     const calls = mockFetch(backend());
     renderPage();
+    await chooseLinux();
     expect(await screen.findByText('sudo ./install.sh --api-key <your-bridge-key>')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Create bridge key' }));
@@ -114,6 +122,7 @@ describe('SetupPage', () => {
   it('offers the pre-filled mcpal.json for download and explains mcp.json', async () => {
     mockFetch(backend());
     renderPage();
+    await chooseLinux();
 
     const link = await screen.findByRole('link', { name: 'Download mcpal.json' });
     expect(link).toHaveAttribute('download', 'mcpal.json');
@@ -133,11 +142,33 @@ describe('SetupPage', () => {
   it('installs mcpal.json and mcp.json together', async () => {
     mockFetch(backend());
     renderPage();
+    await chooseLinux();
 
     expect(await screen.findByText('sudo install -D -m 640 ../mcpal.json /etc/mcpal/mcpal.json')).toBeInTheDocument();
     expect(screen.getByText('sudo install -m 640 ../mcp.json /etc/mcpal/mcp.json')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Windows x64' }));
     expect(screen.getByText('Copy-Item ..\\mcpal.json, ..\\mcp.json $env:ProgramData\\MCPal\\')).toBeInTheDocument();
+  });
+
+  it('runs the bridge as a container by default', async () => {
+    mockFetch(backend());
+    renderPage();
+
+    expect(await screen.findByRole('radio', { name: 'Docker (recommended)' })).toBeChecked();
+    expect(screen.getByText('ghcr.io/o/mcpal-bridge:1.2.3')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /mcpal-bridge-1\.2\.3/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Download mcpal.json' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download sample mcp.json' })).toHaveAttribute('download', 'mcp.json');
+    expect(screen.getByText(/^docker run -d --name mcpal-bridge .* -e MCPAL_URL=https:\/\/mcpal\.example\.com -e MCPAL_API_KEY=<your-bridge-key> .* ghcr\.io\/o\/mcpal-bridge:1\.2\.3$/)).toBeInTheDocument();
+  });
+
+  it('puts the created key into the docker run command', async () => {
+    mockFetch(backend());
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Create bridge key' }));
+
+    expect(await screen.findByText(new RegExp(`-e MCPAL_API_KEY=${bridgeKey} `))).toBeInTheDocument();
+    expect(screen.queryByText(/<your-bridge-key>/)).not.toBeInTheDocument();
   });
 
   it('waits for a bridge and then reports it online', async () => {

@@ -30,9 +30,22 @@ Everyone may use every tool at first. To restrict, open **Groups**: remove or na
 
 ### 3. Start the bridge inside your network
 
-The portal guides you: after sign-up it opens **Setup** (also in the menu). It links the bridge download for your system, creates the bridge key, gives you a `mcpal.json` that already points to your server (your local servers go into a second file, `mcp.json`: copy your existing Claude Code `.mcp.json`), shows the install commands with your key filled in and tells you when the bridge is online. The manual steps below do the same.
+The portal guides you: after sign-up it opens **Setup** (also in the menu). It creates the bridge key, shows the `docker run` command with your server URL and key filled in (or the install commands of a release archive), offers a sample `mcp.json` and tells you when the bridge is online. Your local MCP servers go into `mcp.json`: copy your existing Claude Code `.mcp.json`. The manual steps below do the same.
 
-Download the bridge for your platform from the [releases](https://github.com/JabbaKadabra/MCPal/releases) page (`mcpal-bridge-<version>-linux-x64.tar.gz`, `linux-arm64`, or `win-x64.zip`; check the archive against `sha256sums.txt`) and install it as a service with the script inside:
+**Docker (the default).** The image `ghcr.io/jabbakadabra/mcpal-bridge` (linux/amd64 and linux/arm64) holds the bridge plus Node (`npx`) and uv (`uvx`), so common stdio MCP servers work as they are:
+
+```bash
+docker run -d --name mcpal-bridge --hostname mcpal-bridge --restart unless-stopped \
+  -e MCPAL_URL=https://mcpal.example.com \
+  -e MCPAL_API_KEY=mcpal_… \
+  -v "$PWD/mcp.json:/config/mcp.json:ro" \
+  -v mcpal-bridge-data:/data \
+  ghcr.io/jabbakadabra/mcpal-bridge:latest
+```
+
+`MCPAL_URL`, `MCPAL_API_KEY` and `/config/mcp.json` are required; `/data` keeps the status file and tool caches. A compose file, the full contract (volumes, health check, reaching servers on the host, other runtimes) and how to build the image are in [`bridge/packaging/docker/`](bridge/packaging/docker/README.md).
+
+**Service without Docker.** Download the archive for your platform from the [releases](https://github.com/JabbaKadabra/MCPal/releases) page (`mcpal-bridge-<version>-linux-x64.tar.gz`, `linux-arm64`, or `win-x64.zip`; check the archive against `sha256sums.txt`) and install it as a service with the script inside:
 
 ```bash
 # Linux (systemd)
@@ -50,7 +63,7 @@ Expand-Archive mcpal-bridge-<version>-win-x64.zip . ; cd mcpal-bridge-<version>-
 
 Both scripts keep an existing `mcpal.json` and `mcp.json`. On a first install they create both from examples; the `mcp.json` example is one `everything` server reduced to its `echo` tool (needs `npx`), so `mcpal-bridge check` passes and a tool shows up before you add your own servers. Both scripts protect the configuration (mode 640 and `bridge.env` 600 on Linux; an ACL for Administrators, SYSTEM and the service account on Windows), enable restart on failure and start the service only when `mcpal-bridge check` passes. `uninstall.sh` / `uninstall.ps1` remove it. The Linux unit runs with `ProtectSystem=strict` and `ProtectHome=yes`; a local server that needs other paths gets them through `systemctl edit mcpal-bridge` (see the comments in the unit). The Windows binary is unsigned unless the release says otherwise, so SmartScreen may warn.
 
-To build the bridge yourself: `./bridge/packaging/publish-bridge.sh --version 1.1.0 linux-x64` (also `linux-arm64`, `win-x64`; without arguments all three) writes `artifacts/bridge/<rid>`, and `./bridge/packaging/package-bridge.sh 1.1.0 linux-x64` packs the release archive.
+To build the bridge yourself: `docker build -f bridge/Dockerfile -t mcpal-bridge .` for the image, `./bridge/packaging/publish-bridge.sh --version 1.1.0 linux-x64` (also `linux-arm64`, `win-x64`; without arguments all three) writes `artifacts/bridge/<rid>`, and `./bridge/packaging/package-bridge.sh 1.1.0 linux-x64` packs the release archive.
 
 Or run the binary directly. Two files sit next to it (or are given with `--config`):
 
@@ -172,6 +185,7 @@ Configuration (environment variables use `__` for `:`):
 | `Mcpal__AuditRetentionDays` / `AuditQueueCapacity` | 90 / 10000 | How long audit rows are kept; entries the audit writer holds in memory before it drops new ones |
 | `Mcpal__LatestBridgeVersion` | – | Version of the newest bridge release; older bridges get an "update available" hint in the portal and the Setup page links the archives of this version |
 | `Mcpal__BridgeReleaseBaseUrl` | `https://github.com/JabbaKadabra/MCPal/releases` | Releases page the Setup page links to (archives at `<url>/download/v<version>/…`); change it for a fork or a mirror |
+| `Mcpal__BridgeImage` | `ghcr.io/jabbakadabra/mcpal-bridge` | Container image (without tag) the Setup page tells owners to run; the tag is `Mcpal__LatestBridgeVersion`, or `latest`; change it for a fork or a mirror |
 | `Mcpal__MigrateOnStartup` | true | Apply EF Core migrations at startup |
 | `Mcpal__TrustedProxyNetworks__0`, `__1`, … | – | CIDR networks of reverse proxies whose `X-Forwarded-For`/`X-Forwarded-Proto` are trusted (loopback always is), e.g. `172.18.0.0/16` |
 

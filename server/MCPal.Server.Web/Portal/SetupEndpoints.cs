@@ -16,11 +16,12 @@ internal sealed record SetupResponse(
     IReadOnlyList<BridgeDownloadResponse> Downloads,
     string ReleasesUrl,
     string? ChecksumsUrl,
+    string ImageReference,
     string ConfigJson,
     string SampleMcpJson,
     bool HasConnectedBridge);
 
-/// <summary>What the owner needs to install the first bridge: download links, a pre-filled <c>mcpal.json</c> and whether a bridge ever connected.</summary>
+/// <summary>What the owner needs to install the first bridge: download links, the image reference, a pre-filled <c>mcpal.json</c> and whether a bridge ever connected.</summary>
 internal static class SetupEndpoints
 {
     /// <summary>
@@ -57,7 +58,7 @@ internal static class SetupEndpoints
 
         var settings = options.Value;
         var version = string.IsNullOrWhiteSpace(settings.LatestBridgeVersion) ? null : settings.LatestBridgeVersion.Trim();
-        var downloads = BridgeDownloads.For(settings.BridgeReleaseBaseUrl, version);
+        var downloads = BridgeDownloads.For(settings.BridgeReleaseBaseUrl, settings.BridgeImage.Trim(), version);
         var baseUrl = settings.PublicUrl.TrimEnd('/');
 
         // A bridge key that was ever validated means a bridge connected at least once (bridge keys open tunnels only), even if the key was disabled since.
@@ -70,6 +71,7 @@ internal static class SetupEndpoints
             [.. downloads.Downloads.Select(d => new BridgeDownloadResponse(d.Rid, d.Os, d.FileName, d.Url))],
             downloads.ReleasesUrl,
             downloads.ChecksumsUrl,
+            downloads.ImageReference,
             ConfigJson(baseUrl),
             SampleMcpJson,
             connected));

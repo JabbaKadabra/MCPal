@@ -57,6 +57,26 @@ internal sealed class SetupTests
     }
 
     [Test]
+    public async Task Setup_Owner_ReturnsTheBridgeImageOfTheLatestVersion()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: Settings());
+        using var portal = await SignedUpAsync(factory);
+
+        (await GetSetupAsync(portal)).GetProperty("imageReference").GetString().Should().Be("ghcr.io/jabbakadabra/mcpal-bridge:1.2.3");
+    }
+
+    [Test]
+    public async Task Setup_BridgeImageConfiguredAndNoVersion_UsesItWithLatestTag()
+    {
+        var settings = Settings(latest: null);
+        settings["Mcpal:BridgeImage"] = "registry.example.com/acme/bridge";
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: settings);
+        using var portal = await SignedUpAsync(factory);
+
+        (await GetSetupAsync(portal)).GetProperty("imageReference").GetString().Should().Be("registry.example.com/acme/bridge:latest");
+    }
+
+    [Test]
     public async Task Setup_NoLatestVersion_FallsBackToLatestReleasePage()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: Settings(latest: null));

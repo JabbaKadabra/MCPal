@@ -7,8 +7,10 @@ import { CopyButton } from '../components/CopyButton';
 import { ErrorText } from '../components/ErrorText';
 import { t, type MessageKey } from '../i18n';
 
-const platforms = ['linux-x64', 'linux-arm64', 'win-x64'] as const;
-type Platform = (typeof platforms)[number];
+/** How the bridge is installed: as a container (default) or from the release archive of a platform. */
+const methods = ['docker', 'linux-x64', 'linux-arm64', 'win-x64'] as const;
+type Method = (typeof methods)[number];
+type Platform = Exclude<Method, 'docker'>;
 
 const defaultKeyName = 'Main bridge';
 
@@ -27,6 +29,14 @@ function archiveOf(setup: Setup, platform: Platform) {
   const extension = platform === 'win-x64' ? 'zip' : 'tar.gz';
   const fileName = known?.fileName ?? `mcpal-bridge-<version>-${platform}.${extension}`;
   return { fileName, folder: fileName.slice(0, -(extension.length + 1)), url: known?.url };
+}
+
+/** The container needs no mcpal.json: the server URL and the key are environment variables. The key is part of the command. */
+function dockerCommands(setup: Setup, key: string): string[] {
+  return [
+    `docker run -d --name mcpal-bridge --hostname mcpal-bridge --restart unless-stopped -e MCPAL_URL=${setup.mcpalUrl} -e MCPAL_API_KEY=${key} -v "$PWD/mcp.json:/config/mcp.json:ro" -v mcpal-bridge-data:/data ${setup.imageReference}`,
+    'docker logs -f mcpal-bridge',
+  ];
 }
 
 /** The install commands of the release archive. The key is part of the command, not of mcpal.json. */
@@ -55,7 +65,7 @@ function configHref(json: string): string {
 }
 
 export function SetupPage() {
-  const [platform, setPlatform] = useState<Platform>('linux-x64');
+  const [method, setMethod] = useState<Method>('docker');
   const [keyName, setKeyName] = useState(defaultKeyName);
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const queryClient = useQueryClient();
@@ -76,6 +86,7 @@ export function SetupPage() {
 
   const online = connections.data?.[0];
   const data = setup.data;
+  const keyOrPlaceholder = created?.key ?? t('setup.key.placeholder');
 
   return (
     <>
@@ -85,24 +96,29 @@ export function SetupPage() {
       {data !== undefined && (
         <ol className="steps">
           <li>
-            <h2>{t('setup.download.title')}</h2>
+            <h2>{t(method === 'docker' ? 'setup.image.title' : 'setup.download.title')}</h2>
             <div className="step-body">
               <fieldset className="choice">
-                <legend>{t('setup.platform')}</legend>
-                {platforms.map((option) => (
+                <legend>{t('setup.method')}</legend>
+                {methods.map((option) => (
                   <label key={option}>
-                    <input type="radio" name="platform" checked={platform === option} onChange={() => setPlatform(option)} />
-                    {t(`setup.platform.${option}` satisfies MessageKey)}
+                    <input type="radio" name="method" checked={method === option} onChange={() => setMethod(option)} />
+                    {t(`setup.method.${option}` satisfies MessageKey)}
                   </label>
                 ))}
               </fieldset>
-              {archiveOf(data, platform).url === undefined ? (
+              {method === 'docker' ? (
+                <>
+                  <p>{t('setup.image.body')}</p>
+                  <Snippet value={data.imageReference} />
+                </>
+              ) : archiveOf(data, method).url === undefined ? (
                 <p>
                   {t('setup.download.fallback')} <a href={data.releasesUrl}>{t('setup.download.releases')}</a>
                 </p>
               ) : (
                 <p>
-                  <a href={archiveOf(data, platform).url}>{t('setup.download.link', { file: archiveOf(data, platform).fileName })}</a>
+                  <a href={archiveOf(data, method).url}>{t('setup.download.link', { file: archiveOf(data, method).fileName })}</a>
                   {data.checksumsUrl !== null && (
                     <>
                       {' · '}
@@ -142,10 +158,12 @@ export function SetupPage() {
           <li>
             <h2>{t('setup.config.title')}</h2>
             <div className="step-body">
-              <p>{t('setup.config.body')}</p>
-              <a className="button-link" href={configHref(data.configJson)} download="mcpal.json">
-                {t('setup.config.download')}
-              </a>
+              <p>{t(method === 'docker' ? 'setup.config.dockerBody' : 'setup.config.body')}</p>
+              {method !== 'docker' && (
+                <a className="button-link" href={configHref(data.configJson)} download="mcpal.json">
+                  {t('setup.config.download')}
+                </a>
+              )}
               <p className="muted">{t('setup.config.servers')}</p>
               <p>
                 {t('setup.config.sample')}{' '}
@@ -158,8 +176,8 @@ export function SetupPage() {
           <li>
             <h2>{t('setup.install.title')}</h2>
             <div className="step-body">
-              <p>{t('setup.install.body')}</p>
-              {installCommands(data, platform, created?.key ?? t('setup.key.placeholder')).map((command) => (
+              <p>{t(method === 'docker' ? 'setup.install.dockerBody' : 'setup.install.body')}</p>
+              {(method === 'docker' ? dockerCommands(data, keyOrPlaceholder) : installCommands(data, method, keyOrPlaceholder)).map((command) => (
                 <Snippet key={command} value={command} />
               ))}
             </div>

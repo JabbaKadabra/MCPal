@@ -23,6 +23,7 @@ docker compose up --build                      # server + PostgreSQL on :8080
 ./bridge/packaging/publish-bridge.sh [--version X.Y.Z] [rid] # single-file bridge (linux-x64, linux-arm64, win-x64) into artifacts/bridge
 ./bridge/packaging/package-bridge.sh X.Y.Z linux-x64 # release archive with install script into artifacts/release
 bridge/packaging/linux/test-install.sh         # tests install.sh without root or systemd
+bridge/packaging/docker/test-image.sh          # builds bridge/Dockerfile (the default bridge install) and runs `check` in it
 
 # EF Core migrations (live in server/MCPal.Server.Storage/Migrations; design-time factory pins PostgreSQL)
 dotnet ef migrations add <Name> --project server/MCPal.Server.Storage --output-dir Migrations
@@ -36,7 +37,7 @@ npm run dev                                    # :5173, proxies /api, /mcp, /hub
 npm run build                                  # writes the SPA into server/MCPal.Server/wwwroot
 ```
 
-CI (`.github/workflows/ci.yml`) runs a Release build + `dotnet test`, `npm run typecheck` + `npm test` for the SPA, and a Playwright job against the compose stack. `.github/workflows/release.yml` builds and publishes a release for a `vX.Y.Z` tag (bridge archives, checksums, GHCR image).
+CI (`.github/workflows/ci.yml`) runs a Release build + `dotnet test`, `npm run typecheck` + `npm test` for the SPA, and a Playwright job against the compose stack. `.github/workflows/release.yml` builds and publishes a release for a `vX.Y.Z` tag (bridge image and archives, checksums, server image on GHCR).
 
 Pitfalls seen in this repo:
 - Run the whole `dotnet test MCPal.slnx` after touching a ring module (`ApplicationModule`, `StorageModule`, `InfrastructureModule`, `WebModule`), `ServerModule`, `ServerWebServices` or `Program.cs`: a registration mistake there breaks every `ServerWebApplicationFactory` test (for example `services.AddOpenTelemetry()` in the module's own `ServiceCollection` registers a fallback `IConfiguration`; `ServerWebServices` removes it).
@@ -48,7 +49,7 @@ Pitfalls seen in this repo:
 
 ## Architecture
 
-The repo is grouped by what ships. `server/` is the container image (the onion rings `MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web`, the ASP.NET host `MCPal.Server`, their tests, and the `portal/` SPA that is built into the host's `wwwroot`). `bridge/` is the on-prem binary (`MCPal.Bridge`, its tests, `packaging/` with publish scripts and installers). `shared/MCPal.Contracts` is the tunnel protocol both sides compile against. `tests/` holds only cross-artifact tests. One `MCPal.slnx` holds everything, because Contracts changes and the E2E tests must build both sides together. Use the `.slnf` filters for a single artifact.
+The repo is grouped by what ships. `server/` is the container image (the onion rings `MCPal.Server.Domain`, `.Application`, `.Storage`, `.Infrastructure`, `.Web`, the ASP.NET host `MCPal.Server`, their tests, and the `portal/` SPA that is built into the host's `wwwroot`). `bridge/` is the on-prem binary (`MCPal.Bridge`, its tests, `Dockerfile` (the default install: container image with Node and uv), `packaging/` with publish scripts, installers and the docker contract/compose example). `shared/MCPal.Contracts` is the tunnel protocol both sides compile against. `tests/` holds only cross-artifact tests. One `MCPal.slnx` holds everything, because Contracts changes and the E2E tests must build both sides together. Use the `.slnf` filters for a single artifact.
 
 Naming: the **server** is MCPal's own cloud service and the **bridge** is the process inside the company network. The MCP servers the bridge talks to are **local MCP servers**. In prose, say "MCPal server" wherever "server" alone could mean a local MCP server.
 
