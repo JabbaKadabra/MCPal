@@ -9,6 +9,11 @@
     <Project Path="bridge/MCPal.Bridge/MCPal.Bridge.csproj" />
   </Folder>
   <Folder Name="/server/">
+    <Project Path="server/MCPal.Server.Application/MCPal.Server.Application.csproj" />
+    <Project Path="server/MCPal.Server.Domain/MCPal.Server.Domain.csproj" />
+    <Project Path="server/MCPal.Server.Infrastructure/MCPal.Server.Infrastructure.csproj" />
+    <Project Path="server/MCPal.Server.Web/MCPal.Server.Web.csproj" />
+    <Project Path="server/MCPal.Server.Storage/MCPal.Server.Storage.csproj" />
     <Project Path="server/MCPal.Server.Tests/MCPal.Server.Tests.csproj" />
     <Project Path="server/MCPal.Server/MCPal.Server.csproj" />
   </Folder>
