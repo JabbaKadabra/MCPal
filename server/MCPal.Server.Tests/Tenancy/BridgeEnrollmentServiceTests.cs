@@ -252,4 +252,33 @@ internal sealed class BridgeEnrollmentServiceTests : ServerTestBase
 
         (await scope.Resolve<MCPalDbContext>().ApiKeys.AsNoTracking().SingleAsync(Ct)).Name.Should().HaveLength("Bridge ".Length + 100);
     }
+
+    [Test]
+    public async Task RedeemAsync_NameCutInsideASurrogatePair_StillRedeemsAndStoresValidText()
+    {
+        await using var scope = await GetServicesAsync();
+        var (companyId, ownerId) = await SeedAsync(scope);
+        var service = scope.Resolve<BridgeEnrollmentService>();
+        var created = await NewCodeAsync(service, companyId, ownerId);
+
+        var redeemed = await service.RedeemAsync(created.Code, new string('x', 99) + "\U0001F600\U0001F600", Ct);
+
+        redeemed.Should().NotBeNull();
+        var name = (await scope.Resolve<MCPalDbContext>().ApiKeys.AsNoTracking().SingleAsync(Ct)).Name;
+        name.Should().StartWith("Bridge " + new string('x', 99) + "\U0001F600");
+        name.EnumerateRunes().Should().NotContain(rune => rune == System.Text.Rune.ReplacementChar);
+    }
+
+    [Test]
+    public async Task RedeemAsync_NameWithFormatCharacters_StripsThem()
+    {
+        await using var scope = await GetServicesAsync();
+        var (companyId, ownerId) = await SeedAsync(scope);
+        var service = scope.Resolve<BridgeEnrollmentService>();
+        var created = await NewCodeAsync(service, companyId, ownerId);
+
+        await service.RedeemAsync(created.Code, "a\u202Eb\u200Bc", Ct);
+
+        (await scope.Resolve<MCPalDbContext>().ApiKeys.AsNoTracking().SingleAsync(Ct)).Name.Should().Be("Bridge abc");
+    }
 }

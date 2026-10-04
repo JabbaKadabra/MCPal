@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using MCPal.Server.Ports;
@@ -101,23 +102,32 @@ internal sealed class BridgeEnrollmentService(
         return new RedeemedEnrollment(created.RawKey);
     }
 
+    /// <summary>
+    /// The bridge name comes from an anonymous caller and ends up in a key name shown to owners: drop control and invisible formatting
+    /// characters (such as the right-to-left override) and lone surrogates, and cut at whole characters, so the text is always valid for the database.
+    /// </summary>
     private static string CleanName(string? bridgeName)
     {
         var builder = new StringBuilder();
-        foreach (var c in bridgeName ?? string.Empty)
+        var runes = 0;
+        foreach (var rune in (bridgeName ?? string.Empty).EnumerateRunes())
         {
-            if (!char.IsControl(c))
+            // EnumerateRunes turns a lone surrogate into the replacement character.
+            if (rune == Rune.ReplacementChar || Rune.IsControl(rune) || Rune.GetUnicodeCategory(rune) == UnicodeCategory.Format)
             {
-                builder.Append(c);
+                continue;
             }
+
+            if (runes == MaxBridgeNameLength)
+            {
+                break;
+            }
+
+            builder.Append(rune.ToString());
+            runes++;
         }
 
         var name = builder.ToString().Trim();
-        if (name.Length > MaxBridgeNameLength)
-        {
-            name = name[..MaxBridgeNameLength].TrimEnd();
-        }
-
         return name.Length == 0 ? "bridge" : name;
     }
 }
