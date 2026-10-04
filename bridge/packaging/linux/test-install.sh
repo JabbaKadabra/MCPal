@@ -44,6 +44,35 @@ grep -q '^MCPAL_API_KEY=edited$' "$root/etc/mcpal/bridge.env" || fail "existing 
 grep -q 'new stub' "$root/opt/mcpal/mcpal-bridge" || fail "binary was not replaced"
 grep -q 'was not changed' "$work/out.txt" || fail "no hint that the API key was ignored"
 
+# Enrollment: the stub bridge writes credentials.json next to --config like the real `enroll` verb.
+cat > "$archive/mcpal-bridge" <<'STUB'
+#!/bin/sh
+if [ "$1" = enroll ]; then
+  while [ $# -gt 0 ]; do
+    case "$1" in --config) cfg="$2" ;; --code) code="$2" ;; esac
+    shift
+  done
+  if [ "$code" = mcpale_bad ]; then echo "The enrollment code is invalid" >&2; exit 1; fi
+  printf '{"apiKey":"mcpal_enrolled_%s"}\n' "$code" > "$(dirname "$cfg")/credentials.json"
+  chmod 600 "$(dirname "$cfg")/credentials.json"
+  exit 0
+fi
+echo stub bridge
+STUB
+chmod 755 "$archive/mcpal-bridge"
+saved_root="$root"; root="$work/root-enroll"; mkdir -p "$root"
+run_install --enroll mcpale_good
+[[ -f "$root/etc/mcpal/credentials.json" ]] || fail "enroll did not create credentials.json"
+[[ "$(mode "$root/etc/mcpal/credentials.json")" == "640" ]] || fail "credentials mode is $(mode "$root/etc/mcpal/credentials.json"), want 640"
+grep -q 'mcpal_enrolled_mcpale_good' "$root/etc/mcpal/credentials.json" || fail "credentials.json does not hold the enrolled key"
+grep -q '^MCPAL_API_KEY=$' "$root/etc/mcpal/bridge.env" || fail "env file should hold an empty key when enrolling"
+if MCPAL_INSTALL_ROOT="$root" MCPAL_SKIP_SERVICE=1 "$archive/install.sh" --enroll mcpale_bad > "$work/out.txt" 2>&1; then fail "install.sh accepted a bad code"; fi
+grep -q 'invalid' "$work/out.txt" || fail "no clear message for a bad code"
+if MCPAL_INSTALL_ROOT="$root" MCPAL_SKIP_SERVICE=1 "$archive/install.sh" --enroll mcpale_good --api-key mcpal_x > "$work/out.txt" 2>&1; then fail "install.sh accepted --enroll together with --api-key"; fi
+grep -q 'not both' "$work/out.txt" || fail "no clear message for --enroll with --api-key"
+root="$saved_root"
+
+
 # Unpacked files missing: refuse.
 for missing in mcpal.example.json mcp.example.json; do
   mv "$archive/$missing" "$work/$missing"

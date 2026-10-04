@@ -3,6 +3,9 @@
 Installs the MCPal bridge as a Windows service. Run from the unpacked release archive in an elevated PowerShell.
 
 .EXAMPLE
+.\install.ps1 -Enroll mcpale_xxxxxxxx...
+
+.EXAMPLE
 .\install.ps1 -ApiKey mcpal_xxxxxxxx_...
 
 .DESCRIPTION
@@ -10,12 +13,14 @@ Files: <InstallDir>\mcpal-bridge.exe (binary), <DataDir>\mcpal.json (config, nev
 MCP servers in the .mcp.json format of Claude Code, never overwritten). The files can hold secrets,
 so <DataDir> is readable only by Administrators, SYSTEM and the service account. The API key is stored in the service's
 environment (registry key of the service, Administrators only). The service starts only when "mcpal-bridge check" passes.
+-Enroll trades a one-time code from the portal's Setup page for a bridge key, stored in <DataDir>\credentials.json (protected like the rest of <DataDir>).
 #>
 [CmdletBinding()]
 param(
     [string]$InstallDir = (Join-Path $env:ProgramFiles 'MCPal'),
     [string]$DataDir = (Join-Path $env:ProgramData 'MCPal'),
     [string]$ApiKey = $env:MCPAL_API_KEY,
+    [string]$Enroll = $env:MCPAL_ENROLL,
     # The account the service runs as. Local stdio servers run as this account too and need access to what they use.
     [string]$ServiceAccount = 'LocalSystem',
     [string]$ServiceName = 'MCPalBridge'
@@ -26,6 +31,10 @@ $ErrorActionPreference = 'Stop'
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this script in an elevated PowerShell (Run as administrator).'
+}
+
+if ($Enroll -and $ApiKey) {
+    throw 'Give -Enroll or -ApiKey, not both.'
 }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -72,6 +81,14 @@ if ($ServiceAccount -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
 & icacls.exe $DataDir /inheritance:r /grant:r @grants | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed for $DataDir" }
 
+if ($Enroll) {
+    Write-Host 'Enrolling this bridge ...'
+    & $exe enroll --config $config --code $Enroll
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Enrollment failed, so the bridge has no key. Create a new code on the Setup page and run the script again.'
+    }
+}
+
 $binaryPath = "`"$exe`" run --config `"$config`""
 if ($existing) {
     & sc.exe config $ServiceName binPath= $binaryPath | Out-Null
@@ -97,8 +114,8 @@ if ($ApiKey) {
     $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
     Set-ItemProperty -Path $key -Name Environment -Type MultiString -Value @("MCPAL_API_KEY=$ApiKey")
     Write-Host 'Stored the API key in the service environment.'
-} else {
-    Write-Warning 'No API key given. Run the script again with -ApiKey mcpal_..., or set MCPAL_API_KEY for the service yourself.'
+} elseif (-not $Enroll -and -not (Test-Path (Join-Path $DataDir 'credentials.json'))) {
+    Write-Warning 'No key given. Run the script again with -Enroll <code> (from the Setup page) or -ApiKey mcpal_..., or set MCPAL_API_KEY for the service yourself.'
 }
 
 Write-Host 'Checking the configuration and the local servers ...'
@@ -111,3 +128,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Start-Service -Name $ServiceName
 Write-Host "MCPal bridge started. Logs: Event Viewer > Windows Logs > Application (source '$ServiceName')."
+Write-Host "Your local MCP servers are in $servers; restart the service after changing it. The portal's Setup page shows the bridge as online."

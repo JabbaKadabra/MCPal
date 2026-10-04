@@ -1,7 +1,7 @@
 # The MCPal bridge as a Docker Compose service. Put mcp.json (your local MCP servers, the .mcp.json format of Claude Code)
 # next to this file, then:
 #
-#   MCPAL_URL=https://mcpal.example.com MCPAL_API_KEY=mcpal_... docker compose up -d
+#   MCPAL_URL=https://mcpal.example.com MCPAL_ENROLL=mcpale_... docker compose up -d
 #
 # or write both into a .env file next to this file. The portal's Setup page fills in the values for you.
 services:
@@ -12,7 +12,10 @@ services:
     hostname: mcpal-bridge
     environment:
       MCPAL_URL: ${MCPAL_URL:?set MCPAL_URL to the URL of your MCPal server}
-      MCPAL_API_KEY: ${MCPAL_API_KEY:?set MCPAL_API_KEY to a bridge key}
+      # One of the two: MCPAL_ENROLL is the one-time code from the Setup page (the bridge fetches its own key and keeps it in the
+      # data volume); MCPAL_API_KEY is a bridge key you created yourself.
+      MCPAL_ENROLL: ${MCPAL_ENROLL:-}
+      MCPAL_API_KEY: ${MCPAL_API_KEY:-}
       # Secrets that mcp.json refers to as ${NAME} go here, for example:
       # GITHUB_TOKEN: ${GITHUB_TOKEN}
     volumes:
