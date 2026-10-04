@@ -10,6 +10,8 @@ namespace MCPal.Server.Portal;
 
 internal sealed record BridgeDownloadResponse(string Rid, string Os, string FileName, string Url);
 
+internal sealed record EnrollmentResponse(string Code, DateTimeOffset ExpiresAt);
+
 internal sealed record SetupResponse(
     string McpalUrl,
     string? BridgeVersion,
@@ -46,7 +48,21 @@ internal static class SetupEndpoints
     {
         ArgumentNullException.ThrowIfNull(secured);
 
-        secured.MapGroup(string.Empty).AddEndpointFilter<OwnerOnlyFilter>().MapGet("setup", SetupAsync);
+        var owners = secured.MapGroup(string.Empty).AddEndpointFilter<OwnerOnlyFilter>();
+        owners.MapGet("setup", SetupAsync);
+        owners.MapPost("setup/enrollments", CreateEnrollmentAsync);
+    }
+
+    private static async Task<IResult> CreateEnrollmentAsync(System.Security.Claims.ClaimsPrincipal principal, UserManager<PortalUser> users, BridgeEnrollmentService enrollments, CancellationToken cancellationToken)
+    {
+        if (await users.GetUserAsync(principal) is not { } user)
+        {
+            return Results.Unauthorized();
+        }
+
+        return await enrollments.CreateAsync(user.CompanyId, user.Id, cancellationToken) is { } created
+            ? Results.Json(new EnrollmentResponse(created.Code, created.ExpiresAt), statusCode: StatusCodes.Status201Created)
+            : PortalEndpoints.Problems(["Too many unused enrollment codes. Use one or wait until it expires, then try again."], StatusCodes.Status409Conflict);
     }
 
     private static async Task<IResult> SetupAsync(System.Security.Claims.ClaimsPrincipal principal, UserManager<PortalUser> users, ConnectionRegistry registry, IMcpalData db, IOptions<McpalOptions> options, CancellationToken cancellationToken)

@@ -172,6 +172,9 @@ internal static class ServerWebServices
             options.AddPolicy(PortalEndpoints.RateLimitPolicy, context => RateLimitPartition.GetFixedWindowLimiter(
                 "ip:" + context.Connection.RemoteIpAddress,
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            options.AddPolicy(BridgeEnrollEndpoints.RateLimitPolicy, context => RateLimitPartition.GetFixedWindowLimiter(
+                "ip:" + context.Connection.RemoteIpAddress,
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             options.AddPolicy(McpRateLimitPolicy, context =>
             {
                 var limit = context.RequestServices.GetRequiredService<IOptions<McpalOptions>>().Value.McpRequestsPerMinute;
