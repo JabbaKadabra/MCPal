@@ -482,7 +482,7 @@ $RECYCLE.BIN/
 *.swp
 
 ## MCPal
-# SPA build output copied into the cloud host by the MCPal.Web build
-src/MCPal.Cloud/wwwroot/
-# Local agent configuration contains API keys
+# SPA build output copied into the server host by the portal build (server/portal)
+server/MCPal.Server/wwwroot/
+# Local bridge configuration contains API keys
 mcpal.json

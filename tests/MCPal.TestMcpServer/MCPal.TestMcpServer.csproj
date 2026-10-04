@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- stdio MCP server used by agent and E2E tests. Tools: echo, add, slow, fail. -->
+  <!-- stdio MCP server used by bridge and E2E tests. Tools: echo, add, slow, fail. -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>

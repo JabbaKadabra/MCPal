@@ -1,0 +1,21 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    The server rings (Domain, Application, Storage, Infrastructure, Web and the host) keep their types internal and see each other's
+    internals. The dependency direction between them is enforced by the project references and by ArchitectureTests.
+  -->
+  <ItemGroup Condition="$(MSBuildProjectName.StartsWith('MCPal.Server')) And !$(MSBuildProjectName.EndsWith('.Tests'))">
+    <InternalsVisibleTo Include="MCPal.Server" />
+    <InternalsVisibleTo Include="MCPal.Server.Domain" />
+    <InternalsVisibleTo Include="MCPal.Server.Application" />
+    <InternalsVisibleTo Include="MCPal.Server.Storage" />
+    <InternalsVisibleTo Include="MCPal.Server.Infrastructure" />
+    <InternalsVisibleTo Include="MCPal.Server.Web" />
+    <InternalsVisibleTo Include="MCPal.Server.Tests" />
+    <InternalsVisibleTo Include="MCPal.E2E.Tests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+
+</Project>

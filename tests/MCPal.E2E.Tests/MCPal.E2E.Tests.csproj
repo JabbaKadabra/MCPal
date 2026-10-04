@@ -8,6 +8,7 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="NSubstitute.Analyzers.CSharp" />
@@ -23,8 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/MCPal.Cloud/MCPal.Cloud.csproj" />
-    <ProjectReference Include="../../src/MCPal.Agent/MCPal.Agent.csproj" />
+    <ProjectReference Include="../../server/MCPal.Server/MCPal.Server.csproj" />
+    <ProjectReference Include="../../bridge/MCPal.Bridge/MCPal.Bridge.csproj" />
     <ProjectReference Include="../MCPal.TestMcpServer/MCPal.TestMcpServer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 

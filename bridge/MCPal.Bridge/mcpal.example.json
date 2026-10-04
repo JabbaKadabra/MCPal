@@ -1,0 +1,24 @@
+{
+  "mcpal": {
+    "url": "https://mcpal.example.com",
+    "apiKey": "mcpal_xxxxxxxx_replace-me (or set MCPAL_API_KEY)",
+    "bridgeName": "hq-01"
+  },
+  "jwksFile": "/etc/mcpal/jwks.json",
+  "mcpServers": {
+    "kb": {
+      "command": "npx",
+      "args": ["-y", "@acme/kb-mcp"],
+      "env": { "KB_TOKEN": "${KB_TOKEN}" }
+    },
+    "wiki": {
+      "url": "http://intranet:8080/mcp",
+      "userTokenHeader": "Authorization"
+    },
+    "thirdparty": {
+      "url": "http://intranet:8081/mcp",
+      "headers": { "Authorization": "Bearer ${THIRDPARTY_TOKEN}" },
+      "userContext": false
+    }
+  }
+}

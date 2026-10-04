@@ -1,4 +1,4 @@
-using MCPal.Cloud.Storage;
+using MCPal.Server.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCPal.E2E.Tests;

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Autofac" />
+    <PackageReference Include="Autofac.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\MCPal.Contracts\MCPal.Contracts.csproj" />
+    <ProjectReference Include="..\MCPal.Server.Application\MCPal.Server.Application.csproj" />
+    <ProjectReference Include="..\MCPal.Server.Domain\MCPal.Server.Domain.csproj" />
+    <ProjectReference Include="..\MCPal.Server.Infrastructure\MCPal.Server.Infrastructure.csproj" />
+    <ProjectReference Include="..\MCPal.Server.Storage\MCPal.Server.Storage.csproj" />
+    <ProjectReference Include="..\MCPal.Server.Web\MCPal.Server.Web.csproj" />
+  </ItemGroup>
+
+</Project>

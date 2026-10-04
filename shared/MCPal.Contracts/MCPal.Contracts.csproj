@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Tunnel protocol shared by server and bridge. Must stay free of MCP SDK and framework dependencies. -->
+
+</Project>
