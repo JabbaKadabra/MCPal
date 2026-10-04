@@ -29,7 +29,7 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 COPY --from=build /app .
-COPY bridge/packaging/docker/mcpal.json /app/mcpal.json
+COPY bridge/packaging/docker/mcpal.docker.json /app/mcpal.json
 
 # /config: mount mcp.json (the local MCP servers) read-only. /data: JWKS copy, status file, tool caches (HOME).
 # The non-root user must own /data.

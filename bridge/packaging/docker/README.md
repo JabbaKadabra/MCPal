@@ -23,7 +23,7 @@ Or use [`compose.yml`](compose.yml) in this folder.
 | Local MCP servers | `/config/mcp.json`, mounted read-only (required; `.mcp.json` format of Claude Code) |
 | JWKS copy, status file, tool caches (`HOME`) | `/data`, a volume; the container runs as a non-root user |
 | Secrets for `mcp.json` | more `-e NAME=...`; refer to them as `${NAME}` in `mcp.json` |
-| Other bridge options (`serverOptions`, `callTimeoutSeconds`, a fixed bridge name, ...) | mount your own `mcpal.json` over `/app/mcpal.json` (start from [`mcpal.json`](mcpal.json) here) |
+| Other bridge options (`serverOptions`, `callTimeoutSeconds`, a fixed bridge name, ...) | mount your own `mcpal.json` over `/app/mcpal.json` (start from [`mcpal.docker.json`](mcpal.docker.json) here) |
 | Bridge name in the portal | `--hostname` (default: the container id) |
 | Health | `HEALTHCHECK` runs `status`: healthy only while the tunnel is connected |
 
