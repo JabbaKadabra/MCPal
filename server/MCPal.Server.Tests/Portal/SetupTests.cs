@@ -98,6 +98,21 @@ internal sealed class SetupTests
     }
 
     [Test]
+    public async Task Setup_SampleMcpJson_IsAnEchoServerInClaudeCodeFormat()
+    {
+        await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: Settings());
+        using var portal = await SignedUpAsync(factory);
+
+        var setup = await GetSetupAsync(portal);
+
+        using var sample = JsonDocument.Parse(setup.GetProperty("sampleMcpJson").GetString() ?? string.Empty);
+        var server = sample.RootElement.GetProperty("mcpServers").GetProperty("everything");
+        server.GetProperty("command").GetString().Should().Be("npx");
+        server.GetProperty("args").EnumerateArray().Select(a => a.GetString()).Should().Equal("-y", "@modelcontextprotocol/server-everything", "stdio");
+        server.GetProperty("includeTools").EnumerateArray().Select(a => a.GetString()).Should().Equal("echo");
+    }
+
+    [Test]
     public async Task Setup_Member_IsForbidden()
     {
         await using var factory = await ServerWebApplicationFactory.CreateAsync(Ct, settings: Settings());

@@ -228,6 +228,8 @@ export const en = {
   'setup.config.body': 'Download mcpal.json: it already points to this server. Your local MCP servers go into a second file, mcp.json, next to it.',
   'setup.config.download': 'Download mcpal.json',
   'setup.config.servers': 'For mcp.json copy your existing MCP config: the file with the mcpServers block that Claude Code uses (.mcp.json). The bridge reads it as it is.',
+  'setup.config.sample': 'No MCP config yet? Start with a sample that has one tool, echo, to see the whole path work:',
+  'setup.config.sampleDownload': 'Download sample mcp.json',
   'setup.install.title': 'Install and start',
   'setup.install.body': 'Save mcpal.json and mcp.json next to the archive. Then run in that folder:',
   'setup.verify.title': 'Wait for the bridge',

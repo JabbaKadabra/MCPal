@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCPal is a reverse-tunnel MCP relay. A bridge inside a company network opens an outbound SignalR connection to the server. The server exposes one public MCP endpoint (`/mcp`) to claude.ai / Claude Code and relays tool calls through the tunnel to the bridge, which calls local MCP servers (stdio or HTTP). Each company (tenant) sees only its own tools; tenant isolation is a hard requirement.
 
-`plan.md` holds the design decisions, conventions and a "Status and handoff" section (what is done, deviations from the plan, what is next). Read it before larger changes. `docs/tunnel-protocol.md` and `docs/oauth.md` describe the wire protocol and auth flows.
+`plan.md` holds the design decisions, conventions and a "Status and handoff" section (what is done, deviations from the plan, what is next). Read it before larger changes. `docs/tunnel-protocol.md` and `docs/oauth.md` describe the wire protocol and auth flows. `docs/access-control.md` covers groups, grants and the caller token, `docs/next-steps.md` the post-MVP backlog, `docs/superpowers/specs/` the design specs (onion rings). `CHANGELOG.md` (Unreleased) carries upgrade notes: add an entry for every breaking change.
 
 ## Commands
 

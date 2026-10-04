@@ -21,7 +21,8 @@ const setup: Setup = {
   ],
   releasesUrl: `${releases}/tag/v1.2.3`,
   checksumsUrl: `${releases}/download/v1.2.3/sha256sums.txt`,
-  configJson: JSON.stringify({ mcpal: { url: 'https://mcpal.example.com' }, mcpServers: {} }),
+  configJson: JSON.stringify({ mcpal: { url: 'https://mcpal.example.com' } }),
+  sampleMcpJson: JSON.stringify({ mcpServers: { everything: { command: 'npx', includeTools: ['echo'] } } }),
   hasConnectedBridge: false,
 };
 
@@ -118,6 +119,15 @@ describe('SetupPage', () => {
     expect(link).toHaveAttribute('download', 'mcpal.json');
     expect(decodeURIComponent((link.getAttribute('href') ?? '').split(',')[1] ?? '')).toBe(setup.configJson);
     expect(screen.getByText(/For mcp\.json copy your existing MCP config/)).toBeInTheDocument();
+  });
+
+  it('offers a sample mcp.json with an echo server', async () => {
+    mockFetch(backend());
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: 'Download sample mcp.json' });
+    expect(link).toHaveAttribute('download', 'mcp.json');
+    expect(decodeURIComponent((link.getAttribute('href') ?? '').split(',')[1] ?? '')).toBe(setup.sampleMcpJson);
   });
 
   it('installs mcpal.json and mcp.json together', async () => {

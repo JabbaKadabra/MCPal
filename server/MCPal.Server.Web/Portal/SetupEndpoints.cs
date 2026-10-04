@@ -17,11 +17,28 @@ internal sealed record SetupResponse(
     string ReleasesUrl,
     string? ChecksumsUrl,
     string ConfigJson,
+    string SampleMcpJson,
     bool HasConnectedBridge);
 
 /// <summary>What the owner needs to install the first bridge: download links, a pre-filled <c>mcpal.json</c> and whether a bridge ever connected.</summary>
 internal static class SetupEndpoints
 {
+    /// <summary>
+    /// A first <c>mcp.json</c> for owners without one: the reference "everything" server, reduced to its <c>echo</c> tool (the server also
+    /// has tools that print the environment). Keep in sync with <c>bridge/MCPal.Bridge/mcp.example.json</c>.
+    /// </summary>
+    private const string SampleMcpJson = """
+        {
+          "mcpServers": {
+            "everything": {
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-everything", "stdio"],
+              "includeTools": ["echo"]
+            }
+          }
+        }
+        """;
+
     private static readonly JsonSerializerOptions ConfigFormat = new() { WriteIndented = true };
 
     public static void Map(RouteGroupBuilder secured)
@@ -54,6 +71,7 @@ internal static class SetupEndpoints
             downloads.ReleasesUrl,
             downloads.ChecksumsUrl,
             ConfigJson(baseUrl),
+            SampleMcpJson,
             connected));
     }
 

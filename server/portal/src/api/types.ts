@@ -112,6 +112,8 @@ export interface Setup {
   checksumsUrl: string | null;
   /** The pre-filled bridge config: server URL, no key, no servers. */
   configJson: string;
+  /** A first mcp.json: an echo server for owners who have no MCP config yet. */
+  sampleMcpJson: string;
   /** True once a bridge connected at least once. */
   hasConnectedBridge: boolean;
 }

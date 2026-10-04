@@ -47,6 +47,29 @@ internal sealed class BridgeConfigServersFileTests
         config.McpServers["wiki"].Headers["Authorization"].Should().Be("Bearer x");
     }
 
+    /// <summary>The sample that the portal offers (server <c>SetupEndpoints.SampleMcpJson</c>) and the release archives ship (<c>mcp.example.json</c>).</summary>
+    [Test]
+    public void Load_SampleMcpJson_ExposesOnlyEcho()
+    {
+        var path = WriteConfig(McpalOnly, ("mcp.json", """
+            {
+              "mcpServers": {
+                "everything": {
+                  "command": "npx",
+                  "args": ["-y", "@modelcontextprotocol/server-everything", "stdio"],
+                  "includeTools": ["echo"]
+                }
+              }
+            }
+            """));
+
+        var server = BridgeConfigLoader.Load(path, NoEnvironment, requireMcpal: true).McpServers["everything"];
+
+        server.Command.Should().Be("npx");
+        server.Args.Should().Equal("-y", "@modelcontextprotocol/server-everything", "stdio");
+        server.IncludeTools.Should().Equal("echo");
+    }
+
     [Test]
     public void Load_NoServersFile_HasNoServers()
     {

@@ -1,16 +1,9 @@
 {
   "mcpServers": {
-    "kb": {
+    "everything": {
       "command": "npx",
-      "args": ["-y", "@acme/kb-mcp"],
-      "env": { "KB_TOKEN": "${KB_TOKEN}" }
-    },
-    "wiki": {
-      "url": "http://intranet:8080/mcp"
-    },
-    "thirdparty": {
-      "url": "http://intranet:8081/mcp",
-      "headers": { "Authorization": "Bearer ${THIRDPARTY_TOKEN}" }
+      "args": ["-y", "@modelcontextprotocol/server-everything", "stdio"],
+      "includeTools": ["echo"]
     }
   }
 }

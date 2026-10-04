@@ -147,6 +147,12 @@ export function SetupPage() {
                 {t('setup.config.download')}
               </a>
               <p className="muted">{t('setup.config.servers')}</p>
+              <p>
+                {t('setup.config.sample')}{' '}
+                <a href={configHref(data.sampleMcpJson)} download="mcp.json">
+                  {t('setup.config.sampleDownload')}
+                </a>
+              </p>
             </div>
           </li>
           <li>
