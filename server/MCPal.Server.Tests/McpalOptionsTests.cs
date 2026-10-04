@@ -79,4 +79,23 @@ internal sealed class McpalOptionsTests
     {
         new McpalEnvironmentValidator().Validate(null, new McpalOptions()).Succeeded.Should().BeTrue();
     }
+
+    [TestCase(0)]
+    [TestCase(1441)]
+    public void EnrollmentLifetimeMinutes_OutsideOneToOneThousandFourHundredForty_FailsAnnotationValidation(int minutes)
+    {
+        var options = new McpalOptions { EnrollmentLifetimeMinutes = minutes };
+        var results = new List<ValidationResult>();
+
+        var valid = Validator.TryValidateObject(options, new ValidationContext(options), results, validateAllProperties: true);
+
+        valid.Should().BeFalse();
+        results.Should().ContainSingle().Which.MemberNames.Should().Contain(nameof(McpalOptions.EnrollmentLifetimeMinutes));
+    }
+
+    [Test]
+    public void EnrollmentLifetimeMinutes_Default_IsFifteen()
+    {
+        new McpalOptions().EnrollmentLifetimeMinutes.Should().Be(15);
+    }
 }

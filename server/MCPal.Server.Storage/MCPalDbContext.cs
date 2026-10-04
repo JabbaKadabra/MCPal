@@ -28,6 +28,8 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
 
     public DbSet<Invitation> Invitations => Set<Invitation>();
 
+    public DbSet<BridgeEnrollment> BridgeEnrollments => Set<BridgeEnrollment>();
+
     public DbSet<AccessGroup> AccessGroups => Set<AccessGroup>();
 
     public DbSet<AccessGroupMember> AccessGroupMembers => Set<AccessGroupMember>();
@@ -94,6 +96,16 @@ internal sealed class MCPalDbContext(DbContextOptions<MCPalDbContext> options) :
             invitation.HasIndex(i => i.TokenHash).IsUnique();
             invitation.HasIndex(i => new { i.CompanyId, i.Email });
             invitation.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<BridgeEnrollment>(enrollment =>
+        {
+            enrollment.HasKey(e => e.Id);
+            enrollment.Property(e => e.CodeHash).HasMaxLength(64);
+            enrollment.Property(e => e.CreatedByUserId).HasMaxLength(450);
+            enrollment.HasIndex(e => e.CodeHash).IsUnique();
+            enrollment.HasIndex(e => e.CompanyId);
+            enrollment.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<AccessGroup>(group =>

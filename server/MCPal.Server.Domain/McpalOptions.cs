@@ -51,6 +51,10 @@ public sealed class McpalOptions : IValidatableObject
     [Required]
     public string BridgeImage { get; set; } = "ghcr.io/jabbakadabra/mcpal-bridge";
 
+    /// <summary>How long a bridge enrollment code (created on the Setup page) stays valid, in minutes.</summary>
+    [Range(1, 1440)]
+    public int EnrollmentLifetimeMinutes { get; set; } = 15;
+
     /// <summary>The signed caller token that local MCP servers receive with every tool call.</summary>
     public UserContextOptions UserContext { get; set; } = new();
 
