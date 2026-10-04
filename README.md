@@ -91,7 +91,12 @@ Grouped by what ships: `server/` becomes the container image, `bridge/` the bina
 
 | Path | Purpose |
 |------|---------|
-| `server/MCPal.Server` | ASP.NET Core host: MCP endpoint, OAuth 2.1 server, bridge hub, portal API, hosts the built SPA |
+| `server/MCPal.Server` | ASP.NET Core host: composes the rings, hosts the built SPA |
+| `server/MCPal.Server.Web` | MCP endpoint, OAuth 2.1 endpoints, bridge hub, portal API (outer ring) |
+| `server/MCPal.Server.Application` | Services: tenancy, access control, OAuth, audit, tunnel registry, tool call relay |
+| `server/MCPal.Server.Domain` | Entities, pure rules and ports (centre of the onion, no framework dependencies) |
+| `server/MCPal.Server.Storage` | PostgreSQL adapter: EF Core context, migrations |
+| `server/MCPal.Server.Infrastructure` | Mail adapter (SMTP) |
 | `server/MCPal.Server.Tests` | Server unit and integration tests (PostgreSQL via Testcontainers) |
 | `server/portal` | React + TypeScript + Vite SPA (portal pages and the OAuth sign-in page), built into the server's `wwwroot` |
 | `bridge/MCPal.Bridge` | Worker inside the company network that connects local MCP servers to the MCPal server |

@@ -3,6 +3,11 @@
     "path": "../MCPal.slnx",
     "projects": [
       "server/MCPal.Server/MCPal.Server.csproj",
+      "server/MCPal.Server.Application/MCPal.Server.Application.csproj",
+      "server/MCPal.Server.Domain/MCPal.Server.Domain.csproj",
+      "server/MCPal.Server.Infrastructure/MCPal.Server.Infrastructure.csproj",
+      "server/MCPal.Server.Web/MCPal.Server.Web.csproj",
+      "server/MCPal.Server.Storage/MCPal.Server.Storage.csproj",
       "server/MCPal.Server.Tests/MCPal.Server.Tests.csproj",
       "shared/MCPal.Contracts/MCPal.Contracts.csproj"
     ]

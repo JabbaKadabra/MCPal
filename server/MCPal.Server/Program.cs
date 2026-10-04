@@ -22,7 +22,7 @@ app.UseRateLimiter();
 app.UseAuthorization();
 
 // Anonymous endpoints: the default writer prints the status only, never exception details.
-var readiness = new HealthCheckOptions { Predicate = check => check.Tags.Contains(ServerWebServices.ReadyHealthTag) };
+var readiness = new HealthCheckOptions { Predicate = check => check.Tags.Contains(HealthTags.Ready) };
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", readiness);
 app.MapHealthChecks("/health", readiness);
