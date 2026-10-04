@@ -43,7 +43,7 @@ test('the password reset page answers the same for any address', async ({ page }
   await expect(page.getByText('If an account exists for this address, we sent a link')).toBeVisible();
 });
 
-test('a new owner lands on the setup walkthrough and gets a pre-filled mcpal.json and a bridge key', async ({ page, baseURL }) => {
+test('a new owner lands on the setup walkthrough and gets a pre-filled mcpal.json and an enrollment command', async ({ page, baseURL }) => {
   const email = `${unique('owner')}@example.test`;
   await page.goto('/signup');
   await page.getByLabel('Company name').fill(unique('Acme'));
@@ -54,12 +54,13 @@ test('a new owner lands on the setup walkthrough and gets a pre-filled mcpal.jso
   await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByRole('heading', { name: 'Set up your bridge' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Create bridge key' }).click();
-  const key = await page.getByTestId('created-key').innerText();
-  expect(key).toMatch(/^mcpal_[0-9a-f]{8}_[A-Za-z0-9]{40}$/);
-  await expect(page.getByText(`-e MCPAL_API_KEY=${key} `)).toBeVisible();
+  await page.getByRole('button', { name: 'Generate command' }).click();
+  await expect(page.getByText(/^Code valid for \d+:\d\d$/)).toBeVisible();
+  const docker = await page.getByText(/^docker run .* -e MCPAL_ENROLL=mcpale_[A-Za-z0-9]{24} /).innerText();
+  const code = /MCPAL_ENROLL=(mcpale_[A-Za-z0-9]{24}) /.exec(docker)?.[1] ?? '';
+  expect(code).not.toBe('');
   await page.getByRole('radio', { name: 'Linux x64' }).check();
-  await expect(page.getByText(`sudo ./install.sh --api-key ${key}`)).toBeVisible();
+  await expect(page.getByText(`sudo ./install.sh --enroll ${code}`)).toBeVisible();
 
   const href = (await page.getByRole('link', { name: 'Download mcpal.json' }).getAttribute('href')) ?? '';
   const config = JSON.parse(decodeURIComponent(href.split(',')[1] ?? '')) as { mcpal: { url: string; apiKey?: string } };

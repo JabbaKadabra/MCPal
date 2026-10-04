@@ -73,6 +73,12 @@ export interface CreatedApiKey {
   purpose: KeyPurpose;
 }
 
+/** A one-time code a bridge trades for its own key. Shown once; the server keeps only a hash. */
+export interface Enrollment {
+  code: string;
+  expiresAt: string;
+}
+
 export interface Connection {
   bridgeName: string;
   bridgeVersion: string;

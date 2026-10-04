@@ -10,6 +10,7 @@ import { SetupPage } from './SetupPage';
 
 const releases = 'https://github.com/o/r/releases';
 const bridgeKey = 'mcpal_0123abcd_' + 'A'.repeat(40);
+const enrollmentCode = 'mcpale_' + 'B'.repeat(24);
 
 const setup: Setup = {
   mcpalUrl: 'https://mcpal.example.com',
@@ -40,13 +41,17 @@ const online: Connection = {
   rejectedTools: [],
 };
 
-function backend(options: { setup?: Setup; connections?: Connection[] } = {}) {
+function backend(options: { setup?: Setup; connections?: Connection[]; enrollment?: { code: string; expiresAt: string }; enrollStatus?: number } = {}) {
   return (call: RecordedCall) => {
     if (call.url === '/api/portal/setup') return { body: options.setup ?? setup };
     if (call.url === '/api/portal/connections') return { body: options.connections ?? [] };
     if (call.url === '/api/portal/csrf') return { body: { token: 't' } };
     if (call.url === '/api/portal/keys' && call.method === 'POST') {
       return { status: 201, body: { id: 'k1', name: 'Main bridge', prefix: 'mcpal_0123abcd', createdAt: '2026-01-01T10:00:00Z', expiresAt: null, key: bridgeKey, purpose: 'bridge' } };
+    }
+    if (call.url === '/api/portal/setup/enrollments' && call.method === 'POST') {
+      if (options.enrollStatus === 409) return { status: 409, body: { errors: ['Too many unused enrollment codes. Use one or wait until it expires, then try again.'] } };
+      return { status: 201, body: options.enrollment ?? { code: enrollmentCode, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() } };
     }
     return undefined;
   };
@@ -96,29 +101,6 @@ describe('SetupPage', () => {
     expect(screen.queryByRole('link', { name: /mcpal-bridge-/ })).not.toBeInTheDocument();
   });
 
-  it('creates a bridge key, shows it once and puts it into the install command', async () => {
-    const calls = mockFetch(backend());
-    renderPage();
-    await chooseLinux();
-    expect(await screen.findByText('sudo ./install.sh --api-key <your-bridge-key>')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Create bridge key' }));
-
-    expect(await screen.findByTestId('created-key')).toHaveTextContent(bridgeKey);
-    expect(screen.getByText(`sudo ./install.sh --api-key ${bridgeKey}`)).toBeInTheDocument();
-    const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
-    expect(post?.body).toMatchObject({ name: 'Main bridge', purpose: 'bridge' });
-  });
-
-  it('uses the Windows commands for the Windows platform', async () => {
-    mockFetch(backend());
-    renderPage();
-    await userEvent.click(await screen.findByRole('radio', { name: 'Windows x64' }));
-
-    expect(screen.getByText('.\\install.ps1 -ApiKey <your-bridge-key>')).toBeInTheDocument();
-    expect(screen.getByText('Expand-Archive mcpal-bridge-1.2.3-win-x64.zip .')).toBeInTheDocument();
-  });
-
   it('offers the pre-filled mcpal.json for download and explains mcp.json', async () => {
     mockFetch(backend());
     renderPage();
@@ -159,16 +141,84 @@ describe('SetupPage', () => {
     expect(screen.queryByRole('link', { name: /mcpal-bridge-1\.2\.3/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Download mcpal.json' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download sample mcp.json' })).toHaveAttribute('download', 'mcp.json');
-    expect(screen.getByText(/^docker run -d --name mcpal-bridge .* -e MCPAL_URL=https:\/\/mcpal\.example\.com -e MCPAL_API_KEY=<your-bridge-key> .* ghcr\.io\/o\/mcpal-bridge:1\.2\.3$/)).toBeInTheDocument();
+    expect(screen.getByText(/^docker run -d --name mcpal-bridge .* -e MCPAL_URL=https:\/\/mcpal\.example\.com -e MCPAL_ENROLL=<enrollment-code> .* ghcr\.io\/o\/mcpal-bridge:1\.2\.3$/)).toBeInTheDocument();
   });
 
-  it('puts the created key into the docker run command', async () => {
+  it('generates an enrollment code and puts it into the install command', async () => {
+    const calls = mockFetch(backend());
+    renderPage();
+    await chooseLinux();
+    expect(await screen.findByText('sudo ./install.sh --enroll <enrollment-code>')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+
+    expect(await screen.findByText(`sudo ./install.sh --enroll ${enrollmentCode}`)).toBeInTheDocument();
+    expect(screen.getByText(/Code valid for \d+:\d\d/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST' && c.url === '/api/portal/setup/enrollments')).toBe(true);
+    expect(calls.some((c) => c.url === '/api/portal/keys')).toBe(false);
+  });
+
+  it('puts the enrollment code into the docker run command and needs no key', async () => {
     mockFetch(backend());
     renderPage();
-    await userEvent.click(await screen.findByRole('button', { name: 'Create bridge key' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate command' }));
+
+    expect(await screen.findByText(new RegExp(`-e MCPAL_ENROLL=${enrollmentCode} `))).toBeInTheDocument();
+    expect(screen.queryByText(/MCPAL_API_KEY/)).not.toBeInTheDocument();
+  });
+
+  it('uses the Windows enroll option for the Windows platform', async () => {
+    mockFetch(backend());
+    renderPage();
+    await userEvent.click(await screen.findByRole('radio', { name: 'Windows x64' }));
+
+    expect(screen.getByText('.\\install.ps1 -Enroll <enrollment-code>')).toBeInTheDocument();
+    expect(screen.getByText('Expand-Archive mcpal-bridge-1.2.3-win-x64.zip .')).toBeInTheDocument();
+  });
+
+  it('removes an expired code from the command and offers a new one', async () => {
+    mockFetch(backend({ enrollment: { code: enrollmentCode, expiresAt: '2020-01-01T00:00:00Z' } }));
+    renderPage();
+    await chooseLinux();
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate command' }));
+
+    expect(await screen.findByText('This code has expired. Generate a new one.')).toBeInTheDocument();
+    expect(screen.getByText('sudo ./install.sh --enroll <enrollment-code>')).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(enrollmentCode))).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate a new code' })).toBeInTheDocument();
+  });
+
+  it('shows the server message when too many codes are open', async () => {
+    mockFetch(backend({ enrollStatus: 409 }));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate command' }));
+
+    expect(await screen.findByText(/Too many unused enrollment codes/)).toBeInTheDocument();
+  });
+
+  it('still offers a bridge key as an advanced option and then uses it in the commands', async () => {
+    const calls = mockFetch(backend());
+    renderPage();
+    await chooseLinux();
+    expect(screen.queryByRole('button', { name: 'Create bridge key' })).not.toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use a bridge key instead (advanced)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create bridge key' }));
+
+    expect(await screen.findByTestId('created-key')).toHaveTextContent(bridgeKey);
+    expect(screen.getByText(`sudo ./install.sh --api-key ${bridgeKey}`)).toBeInTheDocument();
+    const post = calls.find((c) => c.method === 'POST' && c.url === '/api/portal/keys');
+    expect(post?.body).toMatchObject({ name: 'Main bridge', purpose: 'bridge' });
+  });
+
+  it('puts a created key into the docker run command', async () => {
+    mockFetch(backend());
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Use a bridge key instead (advanced)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create bridge key' }));
 
     expect(await screen.findByText(new RegExp(`-e MCPAL_API_KEY=${bridgeKey} `))).toBeInTheDocument();
-    expect(screen.queryByText(/<your-bridge-key>/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/MCPAL_ENROLL/)).not.toBeInTheDocument();
   });
 
   it('waits for a bridge and then reports it online', async () => {
