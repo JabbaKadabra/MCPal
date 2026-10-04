@@ -26,7 +26,7 @@ export function AcceptInvitationPage() {
     mutationFn: () => api.acceptInvitation(token ?? '', password),
     onSuccess: async (me) => {
       queryClient.setQueryData(meQueryKey, me);
-      await navigate('/keys');
+      await navigate('/');
     },
   });
 

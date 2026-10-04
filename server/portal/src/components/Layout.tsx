@@ -21,10 +21,11 @@ export function Layout() {
   return (
     <div className="shell">
       <header className="topbar">
-        <Link to="/keys" className="topbar-home">
+        <Link to="/" className="topbar-home">
           <Brand />
         </Link>
         <nav aria-label="Main">
+          {me.data?.role === 'owner' && <NavLink to="/setup">{t('nav.setup')}</NavLink>}
           <NavLink to="/keys">{t('nav.keys')}</NavLink>
           <NavLink to="/connections">{t('nav.connections')}</NavLink>
           {me.data?.role === 'owner' && <NavLink to="/audit">{t('nav.audit')}</NavLink>}

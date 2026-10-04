@@ -17,7 +17,7 @@ export function SignupPage() {
     mutationFn: () => api.signup(company, email, password),
     onSuccess: async (me) => {
       queryClient.setQueryData(meQueryKey, me);
-      await navigate('/keys');
+      await navigate('/');
     },
   });
 

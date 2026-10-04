@@ -95,6 +95,27 @@ export interface ConnectInfo {
   claudeCodeCommandWithHeader: string;
 }
 
+export interface BridgeDownload {
+  rid: string;
+  os: string;
+  fileName: string;
+  url: string;
+}
+
+export interface Setup {
+  mcpalUrl: string;
+  /** Version of the newest bridge release; null when the server does not know it. */
+  bridgeVersion: string | null;
+  /** Empty when the version is unknown: link to `releasesUrl` then. */
+  downloads: BridgeDownload[];
+  releasesUrl: string;
+  checksumsUrl: string | null;
+  /** The pre-filled bridge config: server URL, no key, no servers. */
+  configJson: string;
+  /** True once a bridge connected at least once. */
+  hasConnectedBridge: boolean;
+}
+
 export interface AuthorizeContext {
   clientName: string;
   redirectHost: string;

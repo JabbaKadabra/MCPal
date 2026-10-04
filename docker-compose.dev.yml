@@ -1,0 +1,5 @@
+# Used by ./dev.sh: publishes PostgreSQL for `dotnet watch`. Host port 5433, so a local PostgreSQL on 5432 does not clash.
+services:
+  postgres:
+    ports:
+      - "5433:5432"

@@ -8,11 +8,13 @@ import { ConnectionsPage } from './pages/ConnectionsPage';
 import { ConnectPage } from './pages/ConnectPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { GroupsPage } from './pages/GroupsPage';
+import { Home } from './pages/Home';
 import { KeysPage } from './pages/KeysPage';
 import { LoginPage } from './pages/LoginPage';
 import { MyAccessPage } from './pages/MyAccessPage';
 import { OAuthAuthorizePage } from './pages/OAuthAuthorizePage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { SetupPage } from './pages/SetupPage';
 import { SignupPage } from './pages/SignupPage';
 import { UsersPage } from './pages/UsersPage';
 
@@ -33,6 +35,8 @@ export function App() {
           </RequireAuth>
         }
       >
+        <Route path="/" element={<Home />} />
+        <Route path="/setup" element={<SetupPage />} />
         <Route path="/keys" element={<KeysPage />} />
         <Route path="/connections" element={<ConnectionsPage />} />
         <Route path="/audit" element={<AuditPage />} />
@@ -41,7 +45,7 @@ export function App() {
         <Route path="/access" element={<MyAccessPage />} />
         <Route path="/connect" element={<ConnectPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/keys" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

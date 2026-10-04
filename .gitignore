@@ -486,3 +486,6 @@ $RECYCLE.BIN/
 server/MCPal.Server/wwwroot/
 # Local bridge configuration contains API keys
 mcpal.json
+
+# Local state of ./dev.sh (Data Protection keys)
+.dev/

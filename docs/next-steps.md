@@ -455,7 +455,7 @@ Install scripts (new folder `bridge/packaging/`):
 - An MSI (WiX) can come later if customers require it for software distribution tools.
 
 Version mismatch message:
-- When `RegisterResult.Accepted` is false because of an unsupported protocol version, the bridge currently logs the server's message at error level (`TunnelClient.LogResult`). Make this explicit: detect the protocol rejection (add `string? Code = null` to `RegisterResult`, for example `"unsupported_protocol"`), log "This bridge (version X, protocol Y) is too old/new for the server; download the current bridge from <PublicUrl>" and stop reconnecting with a long backoff instead of retrying every 30 s.
+- When `RegisterResult.Accepted` is false because of an unsupported protocol version, the bridge currently logs the server's message at error level (`TunnelClient.LogResult`). Make this explicit: detect the protocol rejection (add `string? Code = null` to `RegisterResult`, for example `"unsupported_protocol"`), log "This bridge (version X, protocol Y) is too old/new for the server; download the current bridge from the releases page (the portal's Setup page links it; the server hosts no binaries)" and stop reconnecting with a long backoff instead of retrying every 30 s.
 - Show a warning in the portal for bridges that are older than the latest release (optional; needs the latest version as a config value `Mcpal:LatestBridgeVersion`).
 
 Docs: README install sections for Linux and Windows using the release archives and scripts.

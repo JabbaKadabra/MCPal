@@ -3,10 +3,16 @@ using System.Text.Json.Serialization;
 
 namespace MCPal.Bridge.Config;
 
-/// <summary>Reads and validates <c>mcpal.json</c>. <c>MCPAL_API_KEY</c> overrides <c>mcpal.apiKey</c>.</summary>
+/// <summary>
+/// Reads and validates <c>mcpal.json</c> and the file with the local servers (Claude Code's <c>.mcp.json</c> shape: <c>mcp.json</c>
+/// next to the config, or <c>mcpal.mcpServersFile</c>). <c>MCPAL_API_KEY</c> overrides <c>mcpal.apiKey</c>.
+/// </summary>
 internal static class BridgeConfigLoader
 {
     public const string ApiKeyVariable = "MCPAL_API_KEY";
+
+    /// <summary>File next to <c>mcpal.json</c> that holds the local servers when <c>mcpal.mcpServersFile</c> is not set. Optional.</summary>
+    public const string DefaultServersFileName = "mcp.json";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -19,18 +25,58 @@ internal static class BridgeConfigLoader
     public static BridgeConfig Load(string path, IReadOnlyDictionary<string, string?> environment, bool requireMcpal)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentNullException.ThrowIfNull(environment);
 
-        string json;
+        var raw = ParseRaw(ReadFile(path, "config file"));
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? string.Empty;
+        return Build(raw, ReadServersFile(raw, directory), environment, requireMcpal);
+    }
+
+    private static string ReadFile(string path, string what)
+    {
         try
         {
-            json = File.ReadAllText(path);
+            return File.ReadAllText(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new BridgeConfigException($"Cannot read config file '{path}': {ex.Message}");
+            throw new BridgeConfigException($"Cannot read {what} '{path}': {ex.Message}");
+        }
+    }
+
+    /// <summary>The servers of the servers file: <c>mcpal.mcpServersFile</c> (must exist), else <c>mcp.json</c> next to the config (if it exists).</summary>
+    private static ServersFile? ReadServersFile(RawConfig raw, string directory)
+    {
+        var named = !string.IsNullOrWhiteSpace(raw.Mcpal?.McpServersFile);
+        var path = Path.GetFullPath(named ? raw.Mcpal?.McpServersFile ?? string.Empty : DefaultServersFileName, directory);
+        if (!named && !File.Exists(path))
+        {
+            return null;
         }
 
-        return Parse(json, environment, requireMcpal);
+        var content = ReadFile(path, "servers file");
+        var noBlock = new BridgeConfigException($"Servers file '{path}' needs an 'mcpServers' block, like the .mcp.json of Claude Code.");
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw noBlock;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(content, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("mcpServers", out var block)
+                || block.ValueKind != JsonValueKind.Object)
+            {
+                throw noBlock;
+            }
+
+            return new ServersFile(path, block.Deserialize<Dictionary<string, RawServer?>>(JsonOptions) ?? []);
+        }
+        catch (JsonException ex)
+        {
+            throw new BridgeConfigException($"Servers file '{path}' is not valid JSON: {ex.Message}");
+        }
     }
 
     /// <summary>The whole process environment, for <c>${VAR}</c> expansion. Names are case-insensitive on Windows only.</summary>
@@ -46,25 +92,33 @@ internal static class BridgeConfigLoader
         return variables;
     }
 
+    /// <summary>Parses a config without a servers file (the servers are the inline <c>mcpServers</c> only).</summary>
     public static BridgeConfig Parse(string json, IReadOnlyDictionary<string, string?> environment, bool requireMcpal)
     {
         ArgumentNullException.ThrowIfNull(json);
         ArgumentNullException.ThrowIfNull(environment);
 
-        RawConfig? raw;
+        return Build(ParseRaw(json), null, environment, requireMcpal);
+    }
+
+    private static RawConfig ParseRaw(string json)
+    {
         try
         {
-            raw = JsonSerializer.Deserialize<RawConfig>(json, JsonOptions);
+            return JsonSerializer.Deserialize<RawConfig>(json, JsonOptions) ?? new RawConfig();
         }
         catch (JsonException ex)
         {
             throw new BridgeConfigException($"Config is not valid JSON: {ex.Message}");
         }
+    }
 
-        raw ??= new RawConfig();
+    private static BridgeConfig Build(RawConfig raw, ServersFile? serversFile, IReadOnlyDictionary<string, string?> environment, bool requireMcpal)
+    {
         var mcpal = ParseMcpal(raw.Mcpal, environment, requireMcpal);
+        var rawServers = MergeServers(raw, serversFile);
         var servers = new Dictionary<string, LocalServerConfig>(StringComparer.Ordinal);
-        foreach (var (name, server) in raw.McpServers ?? [])
+        foreach (var (name, server) in rawServers)
         {
             servers[name] = ParseServer(name, server, environment);
         }
@@ -76,6 +130,41 @@ internal static class BridgeConfigLoader
             StatusFile = statusFile,
             JwksFile = jwksFile,
         };
+    }
+
+    /// <summary>The inline servers plus the servers file, then the MCPal-only settings of <c>serverOptions</c> on top.</summary>
+    private static Dictionary<string, RawServer?> MergeServers(RawConfig raw, ServersFile? serversFile)
+    {
+        var merged = new Dictionary<string, RawServer?>(raw.McpServers ?? [], StringComparer.Ordinal);
+        foreach (var (name, server) in serversFile?.Servers ?? [])
+        {
+            if (!merged.TryAdd(name, server))
+            {
+                throw new BridgeConfigException($"Server '{name}' is defined in both 'mcpServers' of the config and in '{serversFile?.Path}'. Keep it in one place.");
+            }
+        }
+
+        foreach (var (name, options) in raw.ServerOptions ?? [])
+        {
+            if (!merged.TryGetValue(name, out var server))
+            {
+                throw new BridgeConfigException($"'serverOptions' names the server '{name}', which is in neither 'mcpServers' nor the servers file.");
+            }
+
+            if (options is null)
+            {
+                continue;
+            }
+
+            server ??= new RawServer();
+            server.IncludeTools = options.IncludeTools ?? server.IncludeTools;
+            server.ExcludeTools = options.ExcludeTools ?? server.ExcludeTools;
+            server.UserContext = options.UserContext ?? server.UserContext;
+            server.UserTokenHeader = options.UserTokenHeader ?? server.UserTokenHeader;
+            merged[name] = server;
+        }
+
+        return merged;
     }
 
     private static McpalConfig ParseMcpal(RawMcpal? raw, IReadOnlyDictionary<string, string?> environment, bool required)
@@ -224,6 +313,9 @@ internal static class BridgeConfigLoader
 
         public Dictionary<string, RawServer?>? McpServers { get; set; }
 
+        /// <summary>MCPal-only settings per server, so the servers themselves can stay in a file copied from another tool.</summary>
+        public Dictionary<string, RawServerOptions?>? ServerOptions { get; set; }
+
         public int? CallTimeoutSeconds { get; set; }
 
         public string? StatusFile { get; set; }
@@ -238,7 +330,23 @@ internal static class BridgeConfigLoader
         public string? ApiKey { get; set; }
 
         public string? BridgeName { get; set; }
+
+        /// <summary>File with the local servers in the Claude Code <c>.mcp.json</c> shape; relative to the config. Default: <c>mcp.json</c> next to it, if present.</summary>
+        public string? McpServersFile { get; set; }
     }
+
+    private sealed class RawServerOptions
+    {
+        public List<string>? IncludeTools { get; set; }
+
+        public List<string>? ExcludeTools { get; set; }
+
+        public bool? UserContext { get; set; }
+
+        public string? UserTokenHeader { get; set; }
+    }
+
+    private sealed record ServersFile(string Path, Dictionary<string, RawServer?> Servers);
 
     private sealed class RawServer
     {

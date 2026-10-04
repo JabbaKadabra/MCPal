@@ -45,13 +45,13 @@ describe('LoginPage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('goes to the API keys page after a normal sign-in', async () => {
+  it('goes to the landing page after a normal sign-in', async () => {
     mockFetch((call) => (call.url === '/api/portal/csrf' ? { body: { token: 't' } } : { body: me }));
     renderLogin('/login');
 
     await signIn();
 
-    expect(await screen.findByTestId('location')).toHaveTextContent('/keys');
+    expect(await screen.findByTestId('location')).toHaveTextContent(/^\/$/);
   });
 
   it('returns to the page the user came from, including its query', async () => {
@@ -82,7 +82,7 @@ describe('LoginPage', () => {
 
     await signIn();
 
-    expect(await screen.findByTestId('location')).toHaveTextContent('/keys');
+    expect(await screen.findByTestId('location')).toHaveTextContent(/^\/$/);
   });
 
   it('tells Claude users to ask for an invitation instead of offering sign-up', () => {

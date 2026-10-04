@@ -21,7 +21,7 @@ export function LoginPage() {
       queryClient.setQueryData(meQueryKey, me);
       // The authorize page cached "not signed in" before it sent the user here; coming back it must ask again.
       queryClient.removeQueries({ queryKey: ['authorize-context'] });
-      await navigate(returnUrl ?? '/keys');
+      await navigate(returnUrl ?? '/');
     },
   });
 

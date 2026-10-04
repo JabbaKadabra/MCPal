@@ -42,3 +42,26 @@ test('the password reset page answers the same for any address', async ({ page }
 
   await expect(page.getByText('If an account exists for this address, we sent a link')).toBeVisible();
 });
+
+test('a new owner lands on the setup walkthrough and gets a pre-filled mcpal.json and a bridge key', async ({ page, baseURL }) => {
+  const email = `${unique('owner')}@example.test`;
+  await page.goto('/signup');
+  await page.getByLabel('Company name').fill(unique('Acme'));
+  await page.getByLabel('Work email').fill(email);
+  await page.getByLabel('Password (at least 10 characters)').fill(password);
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  await expect(page).toHaveURL(/\/setup$/);
+  await expect(page.getByRole('heading', { name: 'Set up your bridge' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create bridge key' }).click();
+  const key = await page.getByTestId('created-key').innerText();
+  expect(key).toMatch(/^mcpal_[0-9a-f]{8}_[A-Za-z0-9]{40}$/);
+  await expect(page.getByText(`sudo ./install.sh --api-key ${key}`)).toBeVisible();
+
+  const href = (await page.getByRole('link', { name: 'Download mcpal.json' }).getAttribute('href')) ?? '';
+  const config = JSON.parse(decodeURIComponent(href.split(',')[1] ?? '')) as { mcpal: { url: string; apiKey?: string } };
+  expect(config.mcpal.url).toBe((baseURL ?? '').replace(/\/$/, ''));
+  expect(config.mcpal.apiKey).toBeUndefined();
+  await expect(page.getByText('sudo install -m 640 ../mcp.json /etc/mcpal/mcp.json')).toBeVisible();
+});

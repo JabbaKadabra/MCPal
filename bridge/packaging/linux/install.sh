@@ -3,7 +3,8 @@
 #
 #   sudo ./install.sh [--api-key mcpal_...]
 #
-# Files: /opt/mcpal/mcpal-bridge (binary), /etc/mcpal/mcpal.json (config, never overwritten),
+# Files: /opt/mcpal/mcpal-bridge (binary), /etc/mcpal/mcpal.json (config, never overwritten), /etc/mcpal/mcp.json (your
+# local MCP servers in the .mcp.json format of Claude Code, never overwritten),
 # /etc/mcpal/bridge.env (MCPAL_API_KEY and other secrets, mode 600), /etc/systemd/system/mcpal-bridge.service.
 # The service starts only when `mcpal-bridge check` passes.
 #
@@ -27,7 +28,7 @@ if [[ "$skip_service" != "1" && "$(id -u)" -ne 0 ]]; then
   echo "Run this script as root (sudo ./install.sh)." >&2
   exit 1
 fi
-for file in mcpal-bridge mcpal.example.json mcpal-bridge.service; do
+for file in mcpal-bridge mcpal.example.json mcp.example.json mcpal-bridge.service; do
   [[ -f "$here/$file" ]] || { echo "Missing $file next to the install script. Run it from the unpacked archive." >&2; exit 1; }
 done
 
@@ -36,6 +37,7 @@ config_dir="$root/etc/mcpal"
 state_dir="$root/var/lib/mcpal"
 unit_dir="$root/etc/systemd/system"
 config="$config_dir/mcpal.json"
+servers="$config_dir/mcp.json"
 env_file="$config_dir/bridge.env"
 
 if [[ "$skip_service" != "1" ]] && ! id mcpal >/dev/null 2>&1; then
@@ -53,7 +55,14 @@ if [[ -e "$config" ]]; then
   echo "Kept the existing $config."
 else
   install -m 640 "$here/mcpal.example.json" "$config"
-  echo "Created $config from the example. Edit it: MCPal server URL and your mcpServers."
+  echo "Created $config from the example. Edit it: the MCPal server URL."
+fi
+
+if [[ -e "$servers" ]]; then
+  echo "Kept the existing $servers."
+else
+  install -m 640 "$here/mcp.example.json" "$servers"
+  echo "Created $servers from the example. Replace it with your own MCP config (the mcpServers block, as in Claude Code's .mcp.json)."
 fi
 
 if [[ -e "$env_file" ]]; then

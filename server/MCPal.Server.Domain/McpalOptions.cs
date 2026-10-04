@@ -36,6 +36,14 @@ public sealed class McpalOptions : IValidatableObject
     /// <summary>Version of the newest bridge release, e.g. <c>1.1.0</c>. Bridges that are older get an "update available" hint in the portal. Empty disables the hint.</summary>
     public string? LatestBridgeVersion { get; set; }
 
+    /// <summary>
+    /// Releases page the setup walkthrough links to, without trailing slash. Archives are expected at
+    /// <c>&lt;url&gt;/download/v&lt;version&gt;/mcpal-bridge-&lt;version&gt;-&lt;rid&gt;</c> (the GitHub release layout). Needs <see cref="LatestBridgeVersion"/> for direct links.
+    /// </summary>
+    [Required]
+    [Url]
+    public string BridgeReleaseBaseUrl { get; set; } = "https://github.com/JabbaKadabra/MCPal/releases";
+
     /// <summary>The signed caller token that local MCP servers receive with every tool call.</summary>
     public UserContextOptions UserContext { get; set; } = new();
 
